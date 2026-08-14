@@ -5,9 +5,9 @@ the evidence already gathered about them, the runbooks and investigation kits
 that apply, and the noise bugs behind the pages — in one place, on your own
 machine, without hosting anything.
 
-> Status: **design**. Nothing is implemented yet. This repository currently
-> holds the data map, the runbook-source contract, and the issues that describe
-> the build.
+> Status: **working v1**. The live incident queue, the detail pane, kit
+> execution and headless mode all run today. Tabs for ADO noise bugs and fleet
+> health are not built yet.
 
 ---
 
@@ -76,7 +76,7 @@ carried over deliberately:
 - **Only actionable rows are shown**, with hidden counts in the status line. A
   flat list of everything tracked is not a work queue.
 
-## Planned install
+## Install
 
 ```powershell
 git clone https://github.com/parkerwall_microsoft/oce-sentry.git
@@ -84,16 +84,72 @@ cd oce-sentry
 python -m pip install -e .
 
 az login
-python -m oce_sentry          # the TUI
-python -m oce_sentry --once   # one fetch, console dump, exit
+$env:OCE_SENTRY_FLEET_REPO = "C:\path\to\meta-livesite-agent-expander"
+
+python -m oce_sentry            # the TUI
+python -m oce_sentry --once     # one fetch, console dump, exit
 ```
 
-Prerequisites: Azure CLI signed in, PowerShell 7 (runbooks and kits execute
-locally), and network reach to the report library, ADO, and Kusto/IcM.
+Prerequisites: Python 3.10+, Azure CLI signed in, PowerShell 7 (investigation
+kits are PowerShell), and network reach to the IcM Kusto cluster.
 
-**No daemon. No instance directory. No pipeline hosting.** If the console ever
-requires any of those, that is a bug — see `DATA-MAP.md` for how portability is
-maintained.
+**No daemon. No instance directory. No pipeline hosting.**
+
+`OCE_SENTRY_FLEET_REPO` points at a checkout of the fleet repository, which
+supplies two things: `data-paths.json` (the incident scope policy) and `kits/`
+(the runbooks). It is a **read-only** dependency — the console never writes
+there.
+
+### Headless
+
+```powershell
+python -m oce_sentry --once --limit 20
+python -m oce_sentry --incident 836736526                 # detail + matching runbooks
+python -m oce_sentry --incident 836736526 --run <kit-id>  # execute one
+```
+
+`--once` exists so this is usable from a script, a pipeline, or an agent that
+cannot drive a TUI.
+
+### Keys
+
+`↑`/`↓` select incident · `[` / `]` choose action · `x` run the selected action
+(confirmation shows the exact command) · `o` open in IcM · `t` open the TSG ·
+`r` refresh · `q` quit.
+
+### Configuration
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `OCE_SENTRY_FLEET_REPO` | — | Fleet checkout: scope policy + kits |
+| `OCE_SENTRY_POLICY` | `<repo>/data-paths.json` | Scope policy, if held elsewhere |
+| `OCE_SENTRY_LOOKBACK_DAYS` | `30` | Incident creation window. Matches the fleet's collector |
+| `OCE_SENTRY_INCIDENTS_INTERVAL` | `300` | Auto-refresh seconds |
+| `OCE_SENTRY_QUERY_TIMEOUT` | `120` | Kusto timeout, seconds |
+| `OCE_SENTRY_ACTION_TIMEOUT` | `900` | Runbook timeout, seconds |
+| `OCE_SENTRY_STATE_DIR` | `%LOCALAPPDATA%\oce-sentry` | Cache and logs |
+| `OCE_SENTRY_OUTPUT_DIR` | `<state>\output` | Runbook results. Refused if inside the fleet repo |
+
+There is **no built-in scope fallback**. If the policy cannot be read the
+console refuses to start, because a console silently running a stale copy of the
+fleet's scope would show a confidently wrong queue.
+
+## Verification
+
+```powershell
+python -m pytest                                  # 22 offline tests
+$env:OCE_SENTRY_LIVE = "1"; python -m pytest      # + live parity against the fleet
+```
+
+The parity test is the one that matters: it compares **exact incident ids and
+track reasons** against the fleet's own watchlist state, not counts — a
+different set of the same size is not parity. At the time of writing the console
+and the fleet agree on all 32 open in-scope incidents with zero `trackReason`
+mismatches.
+
+That agreement is by construction, not by coincidence: the KQL is built from the
+fleet's `data-paths.json` using the same team list, severity branches,
+environment classifier and `case()` precedence as `collect-watchlist.ps1`.
 
 ## Repository visibility
 

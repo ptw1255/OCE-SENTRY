@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+
+# Incident query results must never enter a source tree. The console defaults
+# to %LOCALAPPDATA%\oce-sentry\output and refuses an output dir inside the fleet
+# repo, but a local override should not be able to leak either.
+output/
+result-*.json

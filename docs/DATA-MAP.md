@@ -71,33 +71,40 @@ Two properties matter to the console:
 list, and the "has this been communicated yet" signal that exists nowhere in
 anyone's current workflow.
 
-### 2. Watchlist queue — not yet reachable off-box
+### 2. The live incident queue — Kusto, queried directly
 
-The authoritative list of what is being tracked, and the console's landing tab.
+**The queue is queried live rather than read from a published artifact.** This
+is the console's one deliberate departure from "read what the fleet produced",
+and it is worth stating plainly because the alternative was reasonable too.
 
 | | |
 | --- | --- |
-| **Written by** | `publish-watchlist.ps1`, every `incident-watchlist` run |
-| **Location today** | `<instance>/watchlist-state/watchlist.json` — local to the machine running the fleet |
-| **Reached via** | Nothing. This is the gap |
+| **Reached via** | Kusto REST, `IcmDataWarehouse` / `IncidentsSnapshotV2` |
+| **Auth** | Ambient Azure identity |
+| **Scope policy** | The fleet's `data-paths.json`, read at startup |
 
-Shape: `{ active[], closed[], lastRunUtc, previousRunUtc, retentionDays }`.
-Each active entry carries `incidentId`, `title`, `severity`, `status`,
-`monitorId`, `owningContactAlias`, `environment`, `isCustomerImpacting`,
-`tsgId`, `createDate`, `minutesOpen`, `firstTrackedAt`, `lastSeenAt`,
-`runsTracked`, `isNew`, `trackReason`.
+The KQL is **built from the fleet's own policy file** using the same
+construction as `collect-watchlist.ps1`: same team list, same severity branches,
+same environment classifier, same `case()` precedence. Parity is therefore by
+construction rather than by reimplementation, and it is asserted by a live test
+that compares exact incident ids and track reasons — not counts.
 
-That is everything the queue needs: severity, ownership, age, staleness, the
-TSG link, and *how many times the fleet has already looked at it without
-anything changing*.
+Why live rather than the fleet's published state:
 
-State lives in the instance directory by deliberate design — every fleet run
-starts from a fresh branch, so state committed to a run branch is invisible to
-the next run. Correct for the fleet; fatal for a second machine.
+- An OCE reading a queue that is up to 20 minutes old during an active incident
+  is the exact failure this console exists to remove.
+- It removes the dependency on the fleet's machine entirely. The queue works
+  from any machine with `az login` and a repo checkout.
 
-**Blocked on:** publishing `watchlist.json` to the same library, tracked in the
-fleet repository. Until then the Incidents tab only works on the box running
-the daemon.
+What this costs, and how it is handled: the fleet's state carries tracking
+history (`runsTracked`, `firstTrackedAt`, `isNew`) that a live query cannot
+know. Where `watchlist-state/watchlist.json` happens to be reachable it is read
+as **enrichment only** — it adds "the fleet has looked at this 25 times" to a
+row. Its absence is normal and changes nothing about which incidents appear.
+
+There is no built-in scope fallback. If the policy file cannot be read the
+console refuses to start, because silently running a stale copy of the fleet's
+scope would produce a confidently wrong queue.
 
 ### 3. Fleet health — not yet reachable off-box
 
@@ -161,10 +168,11 @@ data, not a crash.
 | Source | Reachable from any machine? |
 | --- | --- |
 | Report manifest | Yes — Graph |
+| Watchlist tracking history (enrichment only) | No — instance-local, and optional |
 | ADO bugs | Yes — ADO REST |
 | IcM / Kusto | Yes — APIs |
 | Kits / runbooks | Yes — configured sources |
-| **Watchlist queue** | **No — instance-local** |
+| Live incident queue | Yes — Kusto, built from the fleet's scope policy |
 | **Fleet health** | **No — instance-local** |
 
 Closing those two gaps is what makes the console independent of *where the
@@ -172,3 +180,4 @@ fleet runs*. Once the queue and fleet status are published to the library, a
 later move to cloud hosting changes nothing for any consumer: the endpoints,
 the auth and the schemas are identical. That is why publishing is worth doing
 before the console is built rather than after.
+

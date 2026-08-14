@@ -1,0 +1,84 @@
+"""Entry point: `python -m oce_sentry`."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+
+from . import __version__
+from .auth import AuthError, TokenProvider
+from .config import ConfigError, load_config
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="oce-sentry",
+        description="Live incident console for ODSP on-call engineers.",
+    )
+    parser.add_argument("--version", action="version", version=f"oce-sentry {__version__}")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Fetch once, print the queue, exit. Works without a terminal UI.",
+    )
+    parser.add_argument(
+        "--incident",
+        metavar="ID",
+        help="Show one incident and the runbooks that match it.",
+    )
+    parser.add_argument(
+        "--run",
+        metavar="ACTION_ID",
+        help="Run an action against --incident. Requires an explicit incident id.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Rows to print in --once mode (default 50).",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        print(f"config: {exc}", file=sys.stderr)
+        return 2
+
+    tokens = TokenProvider()
+
+    try:
+        if args.run:
+            if not args.incident:
+                print("--run requires --incident", file=sys.stderr)
+                return 2
+            from .cli import run_once_action
+
+            return run_once_action(config, tokens, args.incident, args.run)
+
+        if args.incident:
+            from .cli import render_actions
+
+            return render_actions(config, tokens, args.incident)
+
+        if args.once:
+            from .cli import render_once
+
+            return render_once(config, tokens, limit=args.limit)
+
+        from .tui.app import run_app
+
+        return run_app(config, tokens)
+    except AuthError as exc:
+        print(f"auth: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
