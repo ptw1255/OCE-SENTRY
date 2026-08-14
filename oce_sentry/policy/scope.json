@@ -1,0 +1,246 @@
+{
+  "$schema": "oce-sentry/scope-policy/v1",
+  "metadata": {
+    "description": "Incident scope policy owned by OCE Sentry. Defines which IcM incidents an ODSP live site OCE is responsible for.",
+    "derivedFrom": "meta-livesite-agent-expander/data-paths.json",
+    "derivedFromCommit": "d5513814049c",
+    "derivedAt": "2026-08-14",
+    "note": "Sentry owns this file. It was seeded from the MeTA fleet so the two agree on day one, and it can be edited independently. Point OCE_SENTRY_POLICY at the fleet data-paths.json to track that definition instead."
+  },
+  "sources": {
+    "icm": {
+      "purpose": "Incident history: what paged the MeTA on-call, when, at what severity, and who or what mitigated it.",
+      "cluster": "https://icmcluster.kusto.windows.net",
+      "database": "IcmDataWarehouse",
+      "authResource": "https://icmcluster.kusto.windows.net",
+      "tables": {
+        "incidents": "IncidentsSnapshotV2",
+        "teams": "Teams",
+        "descriptions": "IncidentDescriptions"
+      },
+      "notes": [
+        "Teams is a slowly changing dimension: always reduce with `summarize arg_max(ModifiedDate, *) by TeamId` before joining or filtering.",
+        "IncidentsSnapshotV2 is one row per incident, already deduplicated."
+      ]
+    }
+  },
+  "scope": {
+    "description": "The population this loop is responsible for. Two loops read this file: the incident watchlist tracks what is open right now, and the incident-response fleet claims one of those to enrich.",
+    "recurrenceSuppression": {
+      "windowDays": 7,
+      "description": "A recurring condition is enriched once per window rather than once per firing. Measured 2026-08-13: monitor ODSPSev3Alertstorm raised 34 meta-incidents in 90 days, all for the same AlertTypeID and twelve of them Sev 2, and a single farm's ping failure repeated four times in the open queue. Enriching each firing separately produces near-identical analyses and buries the distinct incidents.",
+      "signature": "MonitorId plus the title with standalone numbers replaced. Counts and timestamps differ between identical firings ('244 Sev3s' versus '163 Sev3s'); tokens mixing letters and digits are preserved, because dprodmgd151 and dprodmgd203 are different farms and genuinely different problems.",
+      "note": "Suppression applies only to claiming for enrichment. The watchlist still tracks every qualifying incident, so nothing disappears from the record."
+    },
+    "teams": [
+      {
+        "id": 104519,
+        "name": "MeTA Analysis OCE",
+        "publicId": "SHAREPOINTSNAP\\MeTAAnalysis"
+      },
+      {
+        "id": 81181,
+        "name": "MeTA microservice",
+        "publicId": "SHAREPOINTSNAP\\MeTAWeb"
+      },
+      {
+        "id": 96608,
+        "name": "MeTA Web Customer",
+        "publicId": "SHAREPOINTSNAP\\MeTAWebCustomer"
+      }
+    ],
+    "watchlist": {
+      "description": "What the watchlist tracks. An incident qualifies if ANY of the reasons below matches. Severity-based tracking is restricted to the v1 environments; customer incidents are never filtered by environment, because a customer is affected regardless of which ring the fault occurred in.",
+      "reasons": [
+        {
+          "reason": "sev2-or-2.5-not-auto",
+          "predicate": "Severity in (2, 25) and not auto-mitigated",
+          "environmentFiltered": true
+        },
+        {
+          "reason": "sev2-or-2.5-unclassified-env",
+          "predicate": "Severity in (2, 25) and not auto-mitigated and EnvClass == 'UNCLASSIFIED'",
+          "environmentFiltered": false,
+          "note": "Tracked under its own reason rather than merged into the environment-qualified set, because 'we could not tell where this happened' is a weaker claim than 'this is production'. Measured 2026-08-13: four such incidents were open and unwatched, three of them alert-storm meta-incidents rolling up 651 Sev 3s between them. The unclassifiedPolicy below promised these were reported rather than dropped; until this reason existed, the query dropped them."
+        },
+        {
+          "reason": "customer-reported",
+          "predicate": "IncidentType == 'CustomerReported'",
+          "environmentFiltered": false,
+          "note": "IcM writes this value without a space. An earlier exclusion in this file spelled it 'Customer Reported' and therefore never matched anything, which means customer-reported incidents were silently present in every previous measurement."
+        },
+        {
+          "reason": "customer-impacting",
+          "predicate": "IsCustomerImpacting == true, at any severity",
+          "environmentFiltered": false
+        }
+      ],
+      "terminalStatuses": [
+        "MITIGATED",
+        "RESOLVED"
+      ],
+      "terminalNote": "IcM Status is ACTIVE, MITIGATED or RESOLVED. An incident leaves the watchlist the first run after it reaches a terminal status or acquires a MitigateDate; it is recorded in the closed history rather than deleted.",
+      "closedHistoryDays": 30,
+      "cadence": "Every 30 minutes. Change the schedule trigger in workflows/incident-watchlist.yaml; nothing else depends on the interval."
+    },
+    "teamsExcluded": [
+      {
+        "id": 129097,
+        "name": "Stream and MeTA OCE",
+        "reason": "Shared Stream/MeTA rotation rather than a MeTA-owned queue."
+      },
+      {
+        "id": 77554,
+        "name": "Video Processing (MeTA)",
+        "reason": "Modern Video tenant."
+      },
+      {
+        "id": 83656,
+        "name": "MeTA Deployment",
+        "reason": "Deployment queue, out of scope for service live site investigation."
+      },
+      {
+        "id": 129090,
+        "name": "OnePlayer",
+        "reason": "Declared owning team of services/spo/modernvideo; counting it here would double-count the sibling service."
+      },
+      {
+        "id": 156084,
+        "name": "Transcoding and Delivery",
+        "reason": "Modern Video tenant."
+      },
+      {
+        "id": 156074,
+        "name": "Insights and Extensions",
+        "reason": "Modern Video tenant."
+      }
+    ],
+    "severity": {
+      "include": [
+        0,
+        1,
+        2,
+        25
+      ],
+      "description": "Sev 0, 1, 2 and Sev 2.5. IcM encodes 2.5 as the integer 25; it sits between 2 and 3 and is MORE urgent than 3, so a naive numeric sort ranks it last and is wrong. Sev 0 and 1 were added 2026-08-13: their earlier absence was an oversight rather than a decision, and it would have silently dropped the most urgent incidents that exist. Measured on the same day, MeTA's queues contained zero Sev 0 and zero Sev 1 over 90 days, so this widening changed no current result -- which is exactly why it went unnoticed.",
+      "normalise": {
+        "25": 2.5
+      }
+    },
+    "aggregation": {
+      "description": "Scope for the incident-aggregation loop, which asks 'what keeps happening' rather than 'what must someone look at right now'. Deliberately narrow on severity and deliberately wide on ownership.",
+      "reasons": [
+        {
+          "reason": "sev-0-1-2-2.5",
+          "predicate": "Severity in (0, 1, 2, 25)",
+          "enabled": true,
+          "note": "Sev 3 and Sev 4 are excluded by instruction. Measured 2026-08-13: MeTA-owned queues took 26,205 incidents in 90 days, of which only 517 are Sev 2 or 2.5 and none is Sev 0 or 1. The remaining Sev 3/4 are roughly 99% auto-mitigated."
+        },
+        {
+          "reason": "customer-reported",
+          "predicate": "IncidentType == 'CustomerReported'",
+          "enabled": true,
+          "note": "Included at ANY severity. IcM files every customer-reported incident as Sev 4, so the severity reason above excludes all of them; without this reason a real customer complaint is invisible to the loop. IcM writes the value without a space -- an earlier config spelled it 'Customer Reported' and therefore matched nothing. Measured 2026-08-13: 28 in 90 days, 12 of them still open."
+        },
+        {
+          "reason": "customer-impacting-sev3-4",
+          "predicate": "IsCustomerImpacting == true",
+          "enabled": false,
+          "note": "Disabled. Measured 2026-08-13: 645 in 90 days with 17 open, dominated by Microsoft.SPO.GridRemeditionAlert, which is not a MeTA monitor. Enable this if customer impact should outrank the severity rule."
+        }
+      ],
+      "openOnly": {
+        "enabled": true,
+        "description": "The downstream report carries ONLY incidents that are open right now. An incident leaves the report the first run after it is mitigated, resolved or auto-mitigated -- the report is a live queue, not an archive.",
+        "openPredicate": "Status not in ('MITIGATED','RESOLVED') and MitigateDate is null",
+        "historyNote": "History is still collected across the full lookback and is NOT filtered to open, because the base rate for a condition is the whole point: 'this alert has fired 84 times and self-healed 98% of them' cannot be computed from the open ones alone. Open-only applies to what is REPORTED, not to what is measured. A cluster appears in the report only while it has at least one open member; its base rate is computed from all of them."
+      },
+      "minMembers": 2,
+      "signatureFanoutThreshold": 20,
+      "ownershipNote": "Ownership is NOT a filter here. Every incident owned by a MeTA team is in scope regardless of which team's monitor raised it, because a monitor MeTA does not own can still consume MeTA's on-call. Each cluster is instead LABELLED with the monitor's ownership from the Geneva registry, because the label changes the action: MeTA can retune a monitor it owns, and can only negotiate routing for one it does not."
+    },
+    "autoMitigation": {
+      "description": "An incident is auto-mitigated when an automation identity closed it. This is an identity test, not a duration test: an earlier version of this loop used 'mitigated within two hours' as a proxy, which both admitted slow automated recoveries and excluded fast human ones.",
+      "identities": [
+        "healthmanagesvc",
+        "m365trustautomation"
+      ],
+      "column": "MitigatedBy",
+      "keep": "not-auto-mitigated",
+      "unmitigatedCountsAsNotAuto": true
+    },
+    "includeIncidentTypes": {
+      "description": "Customer-reported incidents are IN scope for both tracking and enrichment. This key replaces an excludeIncidentTypes list that read 'Customer Reported' with a space -- a value IcM never writes, so it excluded nothing and no code read it anyway. Measured 2026-08-13: all 12 customer-reported incidents in the last 30 days are filed Sev 4, so a severity filter alone would drop every one of them.",
+      "observedValues": [
+        "LiveSite",
+        "CustomerReported",
+        "Deployment"
+      ]
+    },
+    "excludePurged": true,
+    "lookbackDays": 90,
+    "clusterSizeThreshold": 5,
+    "clusterSizeThresholdNote": "How many standalone parent incidents on one monitor make a recurring family large enough to be worth linking under a common parent. Read by BOTH the parent/child coverage collector (#100) and the linking-candidate flag (#90); neither may carry its own literal, so the two cannot disagree about which families count (#118). Applied inclusively: a family of exactly this size qualifies. 5 rather than 3, per #90's instruction to start conservative -- on the volumes measured on team 81181, 17,980 incidents from VideoTranscode-in-SPO alone, a lower bar produces a candidate list too long to act on, and an unread list is the outcome #90 exists to avoid.",
+    "environments": {
+      "description": "v1 covers production and the two pre-production rings MeTA actually ships through. IcM's OccurringEnvironment is inconsistently populated, so classification combines that column with tokens in the incident title, which is where the ring usually appears (e.g. '(sdf) (nam) Cosmic Pod crashloopbackoff').",
+      "include": [
+        "PROD",
+        "SPDF",
+        "MSIT"
+      ],
+      "classification": [
+        {
+          "class": "SPDF",
+          "environmentEquals": [
+            "SPDF",
+            "DOGFOOD"
+          ],
+          "titleContains": [
+            "(sdf)",
+            "spdf",
+            "dogfood"
+          ],
+          "note": "SharePoint Dogfood. IcM records it as either SPDF or DOGFOOD depending on the raising monitor."
+        },
+        {
+          "class": "MSIT",
+          "environmentEquals": [
+            "MSIT"
+          ],
+          "titleContains": [
+            "(msit)",
+            "msit"
+          ],
+          "note": "Microsoft IT ring. Almost never set in OccurringEnvironment; it is nearly always only in the title."
+        },
+        {
+          "class": "PROD",
+          "environmentEquals": [
+            "PROD",
+            "SPOPROD"
+          ],
+          "environmentStartsWith": [
+            "DPRODMGD"
+          ],
+          "titleContains": [
+            "(prod)"
+          ],
+          "note": "DPRODMGD* are dedicated production managed farms and ARE production. Filtering on OccurringEnvironment == 'PROD' alone drops them, which silently loses the MicroservicePing incidents -- nine Sev 2 pages, none of which ever mitigated."
+        },
+        {
+          "class": "PPE",
+          "environmentEquals": [
+            "PPE",
+            "PATHFINDER"
+          ],
+          "titleContains": [
+            "(ppe)",
+            "pathfinder"
+          ],
+          "note": "Pre-production. Excluded from v1. This is a deliberate trade: it removes the Face AI Grouping data-loss monitor, which alone carries most of the Sev 2.5 volume in the window."
+        }
+      ],
+      "unclassifiedPolicy": "Incidents matching no class are counted and reported separately rather than dropped. For Sev 2 and 2.5 this is enforced by the sev2-or-2.5-unclassified-env watchlist reason, which tracks them under a distinct label. Most are alert-storm meta-incidents that carry no environment at all; discarding them silently would hide still-open work."
+    }
+  }
+}

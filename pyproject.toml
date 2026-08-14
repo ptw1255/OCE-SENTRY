@@ -25,5 +25,8 @@ oce-sentry = "oce_sentry.__main__:main"
 [tool.setuptools.packages.find]
 include = ["oce_sentry*"]
 
+[tool.setuptools.package-data]
+oce_sentry = ["policy/*.json", "tui/*.tcss"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -79,26 +79,37 @@ carried over deliberately:
 ## Install
 
 ```powershell
-git clone https://github.com/parkerwall_microsoft/oce-sentry.git
-cd oce-sentry
-python -m pip install -e .
+python -m pip install "git+https://github.com/parkerwall_microsoft/oce-sentry.git@main"
 
 az login
-$env:OCE_SENTRY_FLEET_REPO = "C:\path\to\meta-livesite-agent-expander"
-
-python -m oce_sentry            # the TUI
-python -m oce_sentry --once     # one fetch, console dump, exit
+oce-sentry              # the TUI
+oce-sentry --once       # one fetch, console dump, exit
 ```
 
-Prerequisites: Python 3.10+, Azure CLI signed in, PowerShell 7 (investigation
-kits are PowerShell), and network reach to the IcM Kusto cluster.
+That is the whole thing. Prerequisites: Python 3.10+ and Azure CLI signed in.
 
-**No daemon. No instance directory. No pipeline hosting.**
+**Sentry is independent of the goobers pipeline.** It needs no daemon, no
+instance directory, no pipeline checkout, and nothing the fleet publishes. The
+queue is a live IcM query, and the scope policy that shapes it ships inside the
+package at `oce_sentry/policy/scope.json`.
 
-`OCE_SENTRY_FLEET_REPO` points at a checkout of the fleet repository, which
-supplies two things: `data-paths.json` (the incident scope policy) and `kits/`
-(the runbooks). It is a **read-only** dependency — the console never writes
-there.
+That policy was seeded from the MeTA fleet's `data-paths.json` so the two agree
+on day one, and it records what it was seeded from. `--once` prints the
+effective policy and its hash on every run, so a copy that has fallen behind is
+visible rather than assumed.
+
+### Optional extras
+
+| Want | Set |
+| --- | --- |
+| Investigation kits / runbooks | `OCE_SENTRY_KITS` → a `kits/` directory |
+| Track the fleet's scope instead of Sentry's own | `OCE_SENTRY_POLICY` → a `data-paths.json` |
+| Both, from one fleet checkout | `OCE_SENTRY_FLEET_REPO` → the repo root |
+| The fleet's tracking history ("looked at 25 times") | `OCE_SENTRY_WATCHLIST` → `watchlist.json` |
+
+All read-only, all optional. PowerShell 7 (`pwsh`) is needed only to *run* a
+kit; without it the queue works and runbook execution reports the missing
+dependency.
 
 ### Headless
 
@@ -121,14 +132,16 @@ cannot drive a TUI.
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
-| `OCE_SENTRY_FLEET_REPO` | — | Fleet checkout: scope policy + kits |
-| `OCE_SENTRY_POLICY` | `<repo>/data-paths.json` | Scope policy, if held elsewhere |
+| `OCE_SENTRY_POLICY` | bundled `policy/scope.json` | Scope policy to use instead of the bundled one |
+| `OCE_SENTRY_KITS` | — | Runbook directory. Absent means no actions |
+| `OCE_SENTRY_WATCHLIST` | — | Fleet tracking history, enrichment only |
+| `OCE_SENTRY_FLEET_REPO` | — | Convenience: policy + kits + watchlist from one checkout |
 | `OCE_SENTRY_LOOKBACK_DAYS` | `30` | Incident creation window. Matches the fleet's collector |
 | `OCE_SENTRY_INCIDENTS_INTERVAL` | `300` | Auto-refresh seconds |
 | `OCE_SENTRY_QUERY_TIMEOUT` | `120` | Kusto timeout, seconds |
 | `OCE_SENTRY_ACTION_TIMEOUT` | `900` | Runbook timeout, seconds |
 | `OCE_SENTRY_STATE_DIR` | `%LOCALAPPDATA%\oce-sentry` | Cache and logs |
-| `OCE_SENTRY_OUTPUT_DIR` | `<state>\output` | Runbook results. Refused if inside the fleet repo |
+| `OCE_SENTRY_OUTPUT_DIR` | `<state>\output` | Runbook results. Refused if inside any git repo |
 
 There is **no built-in scope fallback**. If the policy cannot be read the
 console refuses to start, because a console silently running a stale copy of the
@@ -137,7 +150,7 @@ fleet's scope would show a confidently wrong queue.
 ## Verification
 
 ```powershell
-python -m pytest                                  # 22 offline tests
+python -m pytest                                  # 30 offline tests
 $env:OCE_SENTRY_LIVE = "1"; python -m pytest      # + live parity against the fleet
 ```
 
@@ -164,3 +177,6 @@ Content rules regardless of visibility:
 - **No credentials, ever.** The ambient Azure identity is the only credential.
 - Internal endpoints (cluster URIs, library paths, ADO org names) live in
   configuration, not in code, so the repository stays portable and reviewable.
+
+
+

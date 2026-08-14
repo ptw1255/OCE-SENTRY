@@ -173,6 +173,7 @@ def fetch_incidents(
             "open": len(incidents),
             "lookback_days": config.lookback_days,
             "enriched": sum(1 for i in incidents if i.runs_tracked is not None),
-            "policy": f"{config.policy.path.name}@{config.policy.short_hash}",
+            "policy": config.policy.label,
         },
     )
+

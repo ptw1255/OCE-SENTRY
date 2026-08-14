@@ -115,7 +115,7 @@ class OceSentryApp(App):
         table.add_columns("SEV", "AGE", "FLAG", "ENV", "OWNER", "INCIDENT", "TITLE")
         self._kits = discover_kits(self._config)
         self._log(
-            f"[dim]policy {self._config.policy.path.name}@{self._config.policy.short_hash} - "
+            f"[dim]policy {self._config.policy.label} - "
             f"{len(self._kits)} kit(s) - output {self._config.output_dir}[/dim]"
         )
         self.refresh_incidents()
@@ -128,7 +128,7 @@ class OceSentryApp(App):
 
     def refresh_incidents(self) -> None:
         self._generation += 1
-        self._set_status(f"refreshing... (policy {self._config.policy.short_hash})")
+        self._set_status(f"refreshing... (policy {self._config.policy.label})")
         self._fetch(self._generation)
 
     @work(thread=True, exclusive=True, group="fetch")
@@ -166,7 +166,7 @@ class OceSentryApp(App):
         detail = result.detail
         self._set_status(
             f"{len(result.data)} open - {detail['rows_returned']} in scope - "
-            f"{detail['duration_ms']}ms - {result.age_label()} - policy {self._config.policy.short_hash}"
+            f"{detail['duration_ms']}ms - {result.age_label()} - policy {self._config.policy.label}"
         )
 
     def _render_table(self) -> None:
@@ -360,3 +360,4 @@ def _escape(text: str) -> str:
 def run_app(config: Config, tokens: TokenProvider) -> int:
     OceSentryApp(config, tokens).run()
     return 0
+

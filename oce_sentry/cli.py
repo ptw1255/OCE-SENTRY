@@ -33,13 +33,18 @@ def render_once(config: Config, tokens: TokenProvider, limit: int = 50) -> int:
         return 2
 
     print(f"identity   {account}")
-    print(f"policy     {config.policy.path} @ {config.policy.short_hash}")
+    print(f"policy     {config.policy.label}  ({config.policy.path})")
+    if config.policy.origin == "bundled" and config.policy.seeded_from:
+        print(f"           seeded from {config.policy.seeded_from}")
     print(f"cluster    {config.policy.icm['cluster']}/{config.policy.icm['database']}")
     print(f"lookback   {config.lookback_days}d")
     print(f"state      {config.state_dir}")
 
     kits = discover_kits(config)
-    print(f"kits       {len(kits)} discovered" + (f" from {config.kits_dir}" if config.kits_dir else " (no fleet repo configured)"))
+    if config.kits_dir:
+        print(f"kits       {len(kits)} discovered from {config.kits_dir}")
+    else:
+        print("kits       none configured (set OCE_SENTRY_KITS to enable runbooks)")
     print()
 
     client = KustoClient(tokens, timeout=config.query_timeout)
