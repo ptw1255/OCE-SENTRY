@@ -37,14 +37,11 @@ def _fmt_count(value: float) -> str:
 
 
 def _window_label(hours: int) -> str:
-    if hours < 24:
+    # 24h reads as 24h in SRE usage, not 1d; days only from 48h up.
+    if hours < 48:
         return f"{hours}h"
-    if hours % 24 == 0 and hours < 168:
+    if hours % 24 == 0:
         return f"{hours // 24}d"
-    if hours == 168:
-        return "7d"
-    if hours == 720:
-        return "30d"
     return f"{hours}h"
 
 
@@ -85,6 +82,11 @@ class SliScreen(Screen):
         self._breakdown = "environments"
         self._generation = 0
         self._last: SourceResult | None = None
+        #: The window the DISPLAYED numbers were computed over. Distinct from
+        #: _hours, which is the window currently selected: while a refresh is
+        #: in flight the two differ, and labelling rows with the selection
+        #: would claim a window the data does not come from.
+        self._data_hours = WINDOWS[self._window_index]
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -98,7 +100,9 @@ class SliScreen(Screen):
 
     def on_mount(self) -> None:
         table = self.query_one("#sli-table", DataTable)
-        table.add_columns("SLI", "VALUE", "OBJECTIVE", "BUDGET", "TREND", "REQUESTS", "FAILURES")
+        table.add_columns(
+            "SLI", "VALUE", "OBJECTIVE", "WINDOW", "BUDGET", "TREND", "REQUESTS", "FAILURES"
+        )
         # Column labels are fixed at construction: the breakdown dimension is
         # named in the summary pane instead, because mutating a DataTable
         # column label after the fact breaks rendering.
@@ -127,9 +131,9 @@ class SliScreen(Screen):
     def _fetch(self, generation: int, hours: int) -> None:
         result = fetch_slis(self._config, self._client, hours=hours)
         # call_from_thread lives on the App, not on a Screen.
-        self.app.call_from_thread(self._apply, generation, result)
+        self.app.call_from_thread(self._apply, generation, result, hours)
 
-    def _apply(self, generation: int, result: SourceResult) -> None:
+    def _apply(self, generation: int, result: SourceResult, hours: int) -> None:
         if generation != self._generation:
             return  # A newer window was requested while this was in flight.
 
@@ -142,13 +146,14 @@ class SliScreen(Screen):
 
         self._last = result
         self._slis = result.data
+        self._data_hours = hours
         self._render_table()
 
         detail = result.detail
         failed = detail.get("failed", 0)
         note = f" - [yellow]{failed} unavailable[/yellow]" if failed else ""
         self._set_status(
-            f"{_window_label(self._hours)} window - {len(self._slis)} SLI(s){note} - "
+            f"{_window_label(self._data_hours)} window - {len(self._slis)} SLI(s){note} - "
             f"{result.age_label()} - {detail.get('database', '')}"
         )
 
@@ -161,7 +166,16 @@ class SliScreen(Screen):
         table.clear()
         for sli in self._slis:
             if not sli.ok:
-                table.add_row(sli.name, "[dim]unavailable[/dim]", f"{sli.objective:g}%", "", "", "", "")
+                table.add_row(
+                    sli.name,
+                    "[dim]unavailable[/dim]",
+                    f"{sli.objective:g}%",
+                    _window_label(self._data_hours),
+                    "",
+                    "",
+                    "",
+                    "",
+                )
                 continue
 
             burn = sli.error_budget_burn
@@ -182,6 +196,10 @@ class SliScreen(Screen):
                 sli.name,
                 value,
                 f"{sli.objective:g}%",
+                # The window sits immediately before the budget because a burn
+                # figure is meaningless without it: 106% over 1h and 106% over
+                # 30d are very different situations.
+                _window_label(self._data_hours),
                 burn_cell,
                 _sparkline(sli),
                 _fmt_count(sli.denominator),
@@ -263,6 +281,7 @@ class SliScreen(Screen):
 
     def _set_status(self, message: str) -> None:
         self.query_one("#sli-status", Static).update(message)
+
 
 
 

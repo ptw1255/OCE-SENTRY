@@ -139,6 +139,13 @@ def test_a_malformed_registry_is_rejected_loudly(tmp_path, monkeypatch):
         load_registry()
 
 
+def test_window_labels_follow_sre_convention():
+    from oce_sentry.tui.sli_screen import WINDOWS, _window_label
+
+    # 24h reads as 24h, not 1d; days only from 48h up.
+    assert [_window_label(h) for h in WINDOWS] == ["1h", "6h", "24h", "3d", "7d", "30d"]
+
+
 def test_a_missing_registry_file_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setenv("OCE_SENTRY_SLI_REGISTRY", str(tmp_path / "nope.json"))
     with pytest.raises(ValueError, match="could not be read"):

@@ -130,6 +130,7 @@ def render_slis(config: Config, tokens: TokenProvider, hours: int = 24) -> int:
     reachable from a script or an agent that cannot drive a terminal.
     """
     from .sources.slis import fetch_slis
+    from .tui.sli_screen import _window_label
 
     client = KustoClient(tokens, timeout=config.query_timeout)
     result = fetch_slis(config, client, hours=hours)
@@ -144,22 +145,29 @@ def render_slis(config: Config, tokens: TokenProvider, hours: int = 24) -> int:
         print(f"slis unavailable: {result.error}", file=sys.stderr)
         return 1
 
-    header = f"{'SLI':<24} {'VALUE':>11} {'OBJ':>7} {'BUDGET':>8}  {'REQUESTS':>10} {'FAILURES':>10}"
+    header = (
+        f"{'SLI':<24} {'VALUE':>11} {'OBJ':>7} {'WINDOW':>7} {'BUDGET':>8}  "
+        f"{'REQUESTS':>14} {'FAILURES':>12}"
+    )
     print(header)
     print("-" * len(header))
+
+    # The window travels with the row rather than only in the header: a burn
+    # figure read out of context is the thing this column exists to prevent.
+    window = _window_label(hours)
 
     over_budget = 0
     for sli in result.data:
         if not sli.ok:
-            print(f"{sli.name:<24} {'unavailable':>11}   {sli.error}")
+            print(f"{sli.name:<24} {'unavailable':>11} {'':>7} {window:>7}   {sli.error}")
             continue
         burn = sli.error_budget_burn
         if burn is not None and burn > 100:
             over_budget += 1
         print(
-            f"{sli.name:<24} {sli.value:>10.4f}% {sli.objective:>6g}% "
+            f"{sli.name:<24} {sli.value:>10.4f}% {sli.objective:>6g}% {window:>7} "
             f"{(f'{burn:.0f}%' if burn is not None else '-'):>8}  "
-            f"{sli.denominator:>10,.0f} {sli.failures:>10,.0f}"
+            f"{sli.denominator:>14,.0f} {sli.failures:>12,.0f}"
         )
 
     for sli in result.data:
@@ -275,4 +283,5 @@ def run_once_skill(config: Config, tokens: TokenProvider, incident_id: str, skil
         print("--- stderr ---", file=sys.stderr)
         print(run.stderr.rstrip()[:2000], file=sys.stderr)
     return 0 if run.ok else 1
+
 
