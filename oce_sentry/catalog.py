@@ -32,6 +32,39 @@ SOURCE_LABEL = {
     "link": "link",
 }
 
+#: Skills that exist to build or maintain the agent fleet rather than to work
+#: an incident. They are real skills and worth keeping reachable, but an on-call
+#: console that lists "onboard a team" beside "assess blast radius" has the same
+#: problem as an incident queue that shows everything: the useful rows stop
+#: being findable.
+MAINTENANCE_SKILLS = {
+    "generate-skill",
+    "onboard-team",
+    "discover-monitors",
+    "discover-monitors-agent",
+    "find-all-geneva-monitors",
+    "devbox",
+    "updateoceagentconfig",
+    "launchoceagent",
+    "update-rca-overview-deck",
+    "shiftleft-metadatacollection",
+    "odsp-shift-left-prtesting",
+    "improve-tsg",
+    "moreinfo-suggest-questions",
+    "moreinfo-telemetry-analysis",
+    "os-toast",
+    "repro-in-sandbox",
+    "trace",
+}
+
+#: Evaluation and self-test harnesses. Never useful mid-incident.
+_EVAL_PREFIXES = ("eval-", "test-")
+
+
+def is_maintenance(skill_id: str) -> bool:
+    lowered = skill_id.lower()
+    return lowered in MAINTENANCE_SKILLS or lowered.startswith(_EVAL_PREFIXES)
+
 
 @dataclass
 class CatalogEntry:
@@ -54,6 +87,8 @@ class CatalogEntry:
     skill: Skill | None = None
     action: Action | None = None
     error: str = ""
+    #: Builds or maintains the agent fleet rather than working an incident.
+    maintenance: bool = False
 
     @property
     def read_only(self) -> bool:
@@ -125,7 +160,11 @@ def read_verdict(kit_dir: Path) -> str:
     return f"{lead} {rest}".strip()
 
 
-def build_catalog(config, incident: Incident | None = None) -> list[CatalogEntry]:
+def build_catalog(
+    config,
+    incident: Incident | None = None,
+    include_maintenance: bool = False,
+) -> list[CatalogEntry]:
     entries: list[CatalogEntry] = []
 
     for skill in discover_skills(config):
@@ -151,6 +190,7 @@ def build_catalog(config, incident: Incident | None = None) -> list[CatalogEntry
                 needs_shell=skill.needs_shell,
                 writes=["shell access (full, as you)"] if skill.needs_shell else [],
                 skill=skill,
+                maintenance=is_maintenance(skill.id),
             )
         )
 
@@ -182,8 +222,16 @@ def build_catalog(config, incident: Incident | None = None) -> list[CatalogEntry
             )
         )
 
+    if not include_maintenance:
+        entries = [e for e in entries if not e.maintenance]
+
     entries.sort(key=lambda e: (SOURCE_ORDER.get(e.source, 9), e.name.lower()))
     return entries
+
+
+def count_maintenance(config) -> int:
+    """How many were hidden, so the status line can say so rather than pretend."""
+    return sum(1 for s in discover_skills(config) if s.ok and is_maintenance(s.id))
 
 
 def _kit_name(action: Action, directory: Path | None) -> str:
@@ -207,3 +255,4 @@ def _kit_name(action: Action, directory: Path | None) -> str:
 def entries_for(config, incident: Incident | None) -> list[CatalogEntry]:
     """The subset that can run against this incident, in library order."""
     return [e for e in build_catalog(config, incident) if e.applies(incident) and not e.error]
+

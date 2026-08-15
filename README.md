@@ -156,6 +156,14 @@ That sentence is usually the whole answer, and it costs no query to read.
 oce-sentry --kits    # the same library, headless
 ```
 
+### Where skills come from
+
+Sentry ships four skills; everything else is discovered from directories you point it at with `OCE_SENTRY_SKILLS` (a list, separated by the platform path separator). With the ODSP SRE skills collection and the live site agent wired up, the library carries **63 incident actions**.
+
+See **[docs/SKILL-SOURCES.md](docs/SKILL-SOURCES.md)** for what is worth adding and how to clone it — including `correlation-ai` (decode a correlation ID into Geneva links), `pr-detective` (which recent PR caused this), `parse-stack` (Watson stack to symbols), the central SRE skills (`icm`, `mitigation`, `outage-pattern`, `fcm`), and the public sources worth adapting.
+
+Skills that build or maintain the agent fleet rather than work an incident — `generate-skill`, `onboard-team`, `devbox`, the `eval-*` harnesses — are hidden by default and reachable with `a`. A console listing "onboard a team" beside "assess blast radius" has the same problem as a queue that shows everything.
+
 ### Filing and tracking bugs
 
 `c` opens **CREATE BUG**: pick a category (noisy monitor, TSG gap, routing, process, other), describe the problem in your own words, and a skill drafts a well-formed bug from your note plus whatever Sentry knows about the incident on screen. **You read the draft before anything is created.** `b` opens the tracker.
@@ -239,6 +247,7 @@ Content rules regardless of visibility:
 - **No credentials, ever.** The ambient Azure identity is the only credential.
 - Internal endpoints (cluster URIs, library paths, ADO org names) live in
   configuration, not in code, so the repository stays portable and reviewable.
+
 
 
 

@@ -21,7 +21,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, RichLog, Static
 
-from ..catalog import CatalogEntry, build_catalog
+from ..catalog import CatalogEntry, build_catalog, count_maintenance
 from ..models import Incident
 
 
@@ -32,6 +32,8 @@ class LibraryScreen(Screen):
         Binding("r", "refresh", "Refresh"),
         Binding("v", "toggle_view", "Detail / source"),
         Binding("o", "open_source", "Open folder"),
+        Binding("a", "toggle_maintenance", "Show all"),
+        Binding("slash", "filter", "Filter", key_display="/"),
     ]
 
     def __init__(self, config, tokens, incident: Incident | None = None) -> None:
@@ -99,7 +101,16 @@ class LibraryScreen(Screen):
             )
         else:
             context = "no incident selected - condition-specific actions are shown greyed"
-        self._set_status(f"{len(self._entries)} action(s), {runnable} runnable here - {context}")
+        hidden = count_maintenance(self._config) if not self._show_maintenance else 0
+        notes = []
+        if hidden:
+            notes.append(f"{hidden} maintenance hidden (a)")
+        if self._filter:
+            notes.append(f"filtered to {self._filter} (/)")
+        suffix = " - " + " - ".join(notes) if notes else ""
+        self._set_status(
+            f"{len(self._entries)} action(s), {runnable} runnable here - {context}{suffix}"
+        )
         self._render_detail()
 
     # ---------------------------------------------------------------- detail
@@ -245,3 +256,4 @@ class LibraryScreen(Screen):
 
 def _escape(text: str) -> str:
     return str(text).replace("[", r"\[")
+

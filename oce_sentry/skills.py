@@ -152,12 +152,20 @@ def skill_sources(config) -> list[tuple[Path, str]]:
 
     A skill defined closer to the operator wins on id collision: their own
     copy of a skill should beat the one Sentry ships.
+
+    `OCE_SENTRY_SKILLS` takes a LIST, separated by the platform path separator.
+    The useful skills live in several repositories at once -- the SRE skills
+    collection, the live site agent's own skills, and a team's folder inside it
+    -- and supporting a single directory forced a choice between them.
     """
     sources: list[tuple[Path, str]] = []
 
     configured = os.environ.get("OCE_SENTRY_SKILLS")
     if configured:
-        sources.append((Path(configured).expanduser(), "configured"))
+        for raw in configured.split(os.pathsep):
+            raw = raw.strip()
+            if raw:
+                sources.append((Path(raw).expanduser(), "configured"))
 
     home = Path.home() / ".copilot" / "skills"
     sources.append((home, "copilot-user"))
