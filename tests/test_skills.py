@@ -238,6 +238,33 @@ def test_parse_run_output_strips_both_trailer_and_narration():
     assert credits == 0.42
 
 
+def test_cost_and_resume_are_read_from_stderr():
+    """Copilot prints its summary block on stderr, not stdout.
+
+    Parsing stdout alone recorded aiCredits as null on every run ever made,
+    and lost the resume id needed to continue a session -- which is the
+    information an operator most wants after an expensive run.
+    """
+    trailer = (
+        "Changes    +0 -0\n"
+        "AI Credits 107 (1m 24s)\n"
+        "Tokens     536.1k\n"
+        "Resume     copilot --resume=8a482038-9e54-4f1a-870d-6524d9535ea4\n"
+    )
+    answer, session, credits = parse_run_output("The answer.", trailer=trailer)
+    assert credits == 107
+    assert session == "8a482038-9e54-4f1a-870d-6524d9535ea4"
+    # The trailer is telemetry, and must not reach the answer.
+    assert answer == "The answer."
+
+
+def test_other_stderr_content_does_not_leak_into_the_answer():
+    noisy = "warning: something unrelated\nAI Credits 3\n"
+    answer, _, credits = parse_run_output("The answer.", trailer=noisy)
+    assert answer == "The answer."
+    assert credits == 3
+
+
 def test_skill_without_monitor_applies_to_every_incident():
     general = _skill()
     assert skills_for(_incident(monitor_id="anything"), [general]) == [general]

@@ -288,3 +288,45 @@ CreateBugScreen {
     background: $panel;
     color: $text-muted;
 }
+
+/* Settings. The summary sits above the table because "connectors are not
+   wired into skill runs" is the answer most visits are looking for, and it
+   should not require selecting a row. */
+#set-body {
+    height: 1fr;
+}
+
+#set-summary {
+    height: auto;
+    padding: 1 2;
+    background: $panel;
+}
+
+#set-table {
+    height: auto;
+    max-height: 45%;
+}
+
+#set-detail {
+    height: 1fr;
+    border-top: solid $panel;
+}
+
+#set-info {
+    width: 60;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+#set-log {
+    width: 1fr;
+    padding: 0 2;
+    border-left: solid $panel;
+}
+
+#set-status {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+}

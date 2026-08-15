@@ -194,9 +194,41 @@ See **[docs/SKILL-SOURCES.md](docs/SKILL-SOURCES.md)** for how to clone the sour
 
 Skills that build or maintain the agent fleet rather than work an incident — `generate-skill`, `onboard-team`, `devbox`, the `eval-*` harnesses — are hidden by default and reachable with `a`. A console listing "onboard a team" beside "assess blast radius" has the same problem as a queue that shows everything.
 
+### Settings and connectors
+
+`,` opens **Settings**: every MCP connector, whether it can start on this machine, and which skills need it.
+
+```
+CONNECTOR            STATUS   KIND   PURPOSE                                   NEEDED BY
+azure                ready    stdio  Kusto queries (read-only) - telemetry…    41
+icm                  ready    stdio  IcM incident context, discussion entries  16
+geneva-mcp           ready    stdio  Geneva monitor health, metrics, KQL-M     12
+drdashboard          ready    http   DR dashboard - farm and traffic state     -
+```
+
+Two distinctions the screen exists to make, because both were invisible before:
+
+- **Declared is not reachable.** `.mcp.json` lists twelve servers; whether each can start depends on a command being on PATH or an endpoint answering, and that differs per machine.
+- **Reachable is not connected.** An MCP server is not a daemon — the CLI spawns it per session. So "running" is the wrong question. The right ones are *can it start* and *is Sentry passing it to skill runs*.
+
+The **NEEDED BY** column answers "if this is down, what stops working". Skills declare prerequisites in prose rather than front matter, so it is read from the skill body and labelled as indicative rather than a contract.
+
+Connectors are **off by default**. Without them a skill can only summarise the evidence pack — which is exactly what live runs reported before this existed. Turning them on lets skills query production telemetry during a run:
+
+```powershell
+$env:OCE_SENTRY_ENABLE_MCP = '1'
+oce-sentry --connectors        # probe everything, headless
+```
+
+It costs real money. Every server's tool definitions enter the prompt, and a measured `impact` run went from **28.4 credits** to **107 credits on 536k tokens**. That is the tradeoff the setting exists to make explicit.
+
 ### Filing and tracking bugs
 
-`c` opens **CREATE BUG**: pick a category (noisy monitor, TSG gap, routing, process, other), describe the problem in your own words, and a skill drafts a well-formed bug from your note plus whatever Sentry knows about the incident on screen. **You read the draft before anything is created.** `b` opens the tracker.
+`b` opens the tracker, and `c` **inside it** opens CREATE BUG: pick a category (noisy monitor, TSG gap, routing, process, other), describe the problem in your own words, and a skill drafts a well-formed bug from your note plus whatever Sentry knows about the incident you had selected. **You read the draft before anything is created.**
+
+Filing lives next to the list of what is already open, because filing and tracking are the same task a minute apart — and because a rarely-used write action does not belong on the main screen beside Refresh and Quit.
+
+
 
 ```powershell
 oce-sentry --bugs                      # open bugs, most-stalled first
@@ -224,15 +256,22 @@ cannot drive a TUI.
 
 ### Keys
 
-`↑`/`↓` select incident · `[` / `]` choose action · `x` run the selected action
-(confirmation shows the exact command) · `o` open in IcM · `t` open the TSG ·
-`r` refresh · `q` quit.
+`↑`/`↓` select incident · `x` run the matched action (confirmation shows the
+exact command) · `o` open in IcM · `t` open the TSG · `k` kits · `l` skills ·
+`s` SLIs · `b` bugs · `,` settings · `r` refresh · `q` quit.
+
+Screen keys stay on their screen: `c` files a bug from the bug tracker, not from
+the queue.
 
 ### Configuration
 
 | Env var | Default | Purpose |
 | --- | --- | --- |
 | `OCE_SENTRY_POLICY` | bundled `policy/scope.json` | Scope policy to use instead of the bundled one |
+| `OCE_SENTRY_SKILLS` | — | ODSP ADO skill directories, path-separated. Empty means no skills |
+| `OCE_SENTRY_ENABLE_MCP` | `0` | Pass MCP connectors to skill runs. Costs ~4x more per run |
+| `OCE_SENTRY_MCP_CONFIG` | RCA repo `.mcp.json` | MCP config to use instead of the discovered one |
+| `OCE_SENTRY_ALLOW_SKILL_SHELL` | `0` | Permit skills that ask for shell. Rarely wanted |
 | `OCE_SENTRY_KITS` | — | Runbook directory. Absent means no actions |
 | `OCE_SENTRY_WATCHLIST` | — | Fleet tracking history, enrichment only |
 | `OCE_SENTRY_FLEET_REPO` | — | Convenience: policy + kits + watchlist from one checkout |

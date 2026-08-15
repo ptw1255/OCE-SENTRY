@@ -26,21 +26,46 @@ from ..models import SourceResult, utcnow
 class BugScreen(Screen):
     BINDINGS = [
         Binding("escape,q", "close", "Back"),
+        Binding("c", "create_bug", "New bug"),
         Binding("r", "refresh", "Refresh"),
         Binding("o", "open_bug", "Open in ADO"),
         Binding("t", "toggle_terminal", "Show closed"),
     ]
 
-    def __init__(self, config, tokens) -> None:
+    def __init__(self, config, tokens, incident=None) -> None:
         super().__init__()
         self._config = config
         self._tokens = tokens
+        self._incident = incident
         self._client = AdoClient(tokens, timeout=config.query_timeout)
         self._bugs: list[Bug] = []
         self._visible: list[Bug] = []
         self._show_terminal = False
         self._generation = 0
         self._loaded = False
+
+    def action_create_bug(self):
+        """File a bug, from the screen that tracks them.
+
+        Filing and tracking are the same task a minute apart, and this is where
+        an operator can see whether the thing they are about to report is
+        already open.
+
+        An incident is context, not a requirement: a TSG or process problem is
+        worth filing whether or not a row happens to be selected on the queue.
+        """
+        from .bug_form import CreateBugScreen
+
+        def _done(created: dict | None) -> None:
+            if created:
+                self._set_status(
+                    f"created bug {created['id']}: {created['title'][:60]}"
+                )
+                self.refresh_bugs()
+
+        self.app.push_screen(
+            CreateBugScreen(self._config, self._tokens, self._incident), _done
+        )
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)

@@ -204,6 +204,18 @@ def build_command(
         command += ["--deny-tool", "shell"]
     if skill.model:
         command += ["--model", skill.model]
+
+    # Connectors are opt-in. Passing them lets a skill query production
+    # telemetry during a run, which is a real widening of what an action
+    # reaches, so it is a decision rather than a default. Without them a skill
+    # can only summarise the evidence pack -- which is exactly what live runs
+    # reported before this existed.
+    from .connectors import config_path, mcp_enabled
+
+    if mcp_enabled():
+        mcp = config_path()
+        if mcp is not None:
+            command += ["--additional-mcp-config", f"@{mcp}"]
     return command
 
 
@@ -262,20 +274,26 @@ def strip_trace(text: str) -> str:
     return cleaned or text.strip()
 
 
-def parse_run_output(text: str) -> tuple[str, str, float | None]:
+def parse_run_output(text: str, trailer: str = "") -> tuple[str, str, float | None]:
     """Split the CLI's trailer and tool narration off the answer.
 
     Copilot prints a summary block (Changes / AI Credits / Tokens / Resume)
-    after the response. That is telemetry about the run, not part of it, so it
-    is captured separately rather than shown as the skill's answer.
+    after the response, on **stderr** rather than stdout. That is telemetry
+    about the run, not part of it, so it is read separately -- and `trailer`
+    exists because parsing stdout alone silently lost the cost of every run and
+    the resume id needed to continue a session.
+
+    The answer is built from `text` only. Anything else on stderr is a warning
+    or an error, and neither belongs in a skill's answer.
     """
     session = ""
     credits: float | None = None
 
-    match = _RESUME.search(text)
+    haystack = f"{text}\n{trailer}" if trailer else text
+    match = _RESUME.search(haystack)
     if match:
         session = match.group(1)
-    match = _CREDITS.search(text)
+    match = _CREDITS.search(haystack)
     if match:
         try:
             credits = float(match.group(1))
@@ -371,7 +389,7 @@ def run_skill(
 
     duration_ms = int((time.perf_counter() - clock) * 1000)
     raw = "\n".join(collected)
-    answer, session_id, credits = parse_run_output(raw)
+    answer, session_id, credits = parse_run_output(raw, trailer=stderr_text or "")
 
     run = SkillRun(
         run_id=run_id,

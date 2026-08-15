@@ -86,15 +86,11 @@ class IncidentScreen(Screen):
         Binding("o", "open_icm", "IcM"),
         Binding("t", "open_tsg", "TSG"),
         Binding("x", "run_action", "Run"),
-        # key_display keeps the footer readable: Textual otherwise prints the
-        # key name, and "bracketright Next action" is not something anyone reads.
-        Binding("bracketright", "next_action", "Next action", key_display="]"),
-        Binding("bracketleft", "prev_action", "Prev action", key_display="["),
         Binding("s", "show_slis", "SLIs"),
         Binding("k", "show_kits", "Kits"),
         Binding("l", "show_skills", "Skills"),
         Binding("b", "show_bugs", "Bugs"),
-        Binding("c", "create_bug", "New bug"),
+        Binding("comma", "show_settings", "Settings", key_display=","),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -262,28 +258,29 @@ class IncidentScreen(Screen):
             if not incident.monitor_id:
                 lines.append("[dim]It carries no monitorId, so kits cannot be matched.[/dim]")
         else:
-            lines.append("[b]Actions[/b]  ( [ and ] to choose, x to run )")
+            # x runs the best match. Choosing between several belongs on the
+            # skill browser, which can show what each one does; cycling blind
+            # through them from the queue could not.
+            lines.append("[b]Action[/b]  ( x to run )")
             for index, action in enumerate(self._candidates):
-                marker = ">" if index == self._selected_action else " "
                 effects = "read-only" if action.read_only else "writes"
+                marker = ">" if index == 0 else " "
                 lines.append(f"{marker} [{action.kind}] {_escape(action.id)}  [dim]{effects}[/dim]")
-                if index == self._selected_action and action.base_rate:
+                if index == 0 and action.base_rate:
                     bits = ", ".join(f"{k}={v}" for k, v in action.base_rate.items() if k != "tsg")
                     if bits:
                         lines.append(f"    [dim]base rate: {bits}[/dim]")
+            if len(self._candidates) > 1:
+                lines.append(f"[dim]{len(self._candidates) - 1} more in the skill browser (l)[/dim]")
         detail.update("\n".join(lines))
 
     # ---------------------------------------------------------------- actions
 
-    def action_next_action(self) -> None:
-        if self._candidates:
-            self._selected_action = (self._selected_action + 1) % len(self._candidates)
-            self._update_detail()
+    def action_show_settings(self) -> None:
+        """Connectors, permissions, and where the configuration came from."""
+        from .settings_screen import SettingsScreen
 
-    def action_prev_action(self) -> None:
-        if self._candidates:
-            self._selected_action = (self._selected_action - 1) % len(self._candidates)
-            self._update_detail()
+        self.app.push_screen(SettingsScreen(self._config, self._tokens))
 
     def action_show_slis(self) -> None:
         """Open the SLI view.
@@ -312,24 +309,17 @@ class IncidentScreen(Screen):
         )
 
     def action_show_bugs(self) -> None:
+        """The bug tracker, which is also where new bugs are filed.
+
+        Filing used to be a top-level key beside Refresh and Quit, which put a
+        rarely-used write action in the operator's way on every screen. It
+        belongs next to the list of what is already open.
+        """
         from .bug_screen import BugScreen
 
-        self.app.push_screen(BugScreen(self._config, self._tokens))
-
-    def action_create_bug(self) -> None:
-        """File a bug about whatever the operator has just hit.
-
-        An incident is context, not a requirement: a TSG or process problem is
-        worth filing whether or not a row happens to be selected.
-        """
-        from .bug_form import CreateBugScreen
-
-        def _done(created: dict | None) -> None:
-            if created:
-                self._log(f"[green]created bug {created['id']}[/green]: {created['title']}")
-                self._log(f"[dim]{created['url']}[/dim]")
-
-        self.app.push_screen(CreateBugScreen(self._config, self._tokens, self._current_incident()), _done)
+        self.app.push_screen(
+            BugScreen(self._config, self._tokens, self._current_incident())
+        )
 
     def action_open_icm(self) -> None:
         incident = self._current_incident()
@@ -351,7 +341,7 @@ class IncidentScreen(Screen):
             self._log("[yellow]an action is already running[/yellow]")
             return
 
-        action = self._candidates[self._selected_action]
+        action = self._candidates[0]
         if action.kind == "link":
             webbrowser.open(action.url)
             return

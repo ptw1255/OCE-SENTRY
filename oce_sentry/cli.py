@@ -318,6 +318,53 @@ def render_query_kits(config: Config) -> int:
     return 0
 
 
+def render_connectors(config: Config) -> int:
+    """Headless connector inventory: what a skill can reach, and what it cannot."""
+    from .connectors import (
+        annotate_requirements,
+        config_path,
+        load_connectors,
+        mcp_enabled,
+        probe,
+        status_summary,
+    )
+    from .skills import discover_skills
+
+    path = config_path(config)
+    connectors = load_connectors(config)
+    if not connectors:
+        print("No MCP config found.")
+        print("Looked for ~/repos/SRELivesite-RCAAgent/.mcp.json and")
+        print("~/.copilot/mcp-config.json. Set OCE_SENTRY_MCP_CONFIG to override.")
+        return 0
+
+    skills = [s for s in discover_skills(config) if s.ok]
+    annotate_requirements(connectors, skills)
+    for connector in connectors:
+        probe(connector)
+
+    print(f"config     {path}")
+    wired = "yes" if mcp_enabled() else "no  (set OCE_SENTRY_ENABLE_MCP=1)"
+    print(f"wired      {wired}")
+    print(f"status     {status_summary(connectors)}")
+    print()
+
+    header = f"{'CONNECTOR':<30} {'STATUS':<13} {'KIND':<7} {'SKILLS':<7} DETAIL"
+    print(header)
+    print("-" * len(header))
+    for connector in connectors:
+        print(
+            f"{connector.name[:30]:<30} {connector.status:<13} {connector.kind:<7} "
+            f"{len(connector.required_by) or '-':<7} {connector.detail[:44]}"
+        )
+
+    if not mcp_enabled():
+        print()
+        print("Skills cannot reach live data until connectors are wired in.")
+        print("Without them a skill can only summarise the evidence pack.")
+    return 0
+
+
 def render_bugs(config: Config, tokens: TokenProvider, show_all: bool = False) -> int:
     """Headless bug tracker."""
     from .ado import AdoClient, AdoError, load_board

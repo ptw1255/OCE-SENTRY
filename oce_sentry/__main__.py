@@ -68,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the fleet's Kusto investigation kit inventory and exit.",
     )
     parser.add_argument(
+        "--connectors",
+        action="store_true",
+        help="Show MCP connectors and whether they can start, then exit.",
+    )
+    parser.add_argument(
         "--bugs",
         action="store_true",
         help="Show tracked ADO bugs and exit.",
@@ -140,6 +145,11 @@ def main(argv: list[str] | None = None) -> int:
             from .cli import run_kit_cli
 
             return run_kit_cli(config, tokens, args.kit, args.incident)
+
+        if args.connectors:
+            from .cli import render_connectors
+
+            return render_connectors(config)
 
         if args.bugs:
             from .cli import render_bugs

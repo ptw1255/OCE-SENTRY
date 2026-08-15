@@ -82,6 +82,7 @@ class KitStep:
     error: str = ""
     resume_command: str = ""
     duration_ms: int = 0
+    credits: float | None = None
     skipped: bool = False
 
 
@@ -96,14 +97,22 @@ class KitRun:
     def ok(self) -> bool:
         return bool(self.steps) and all(s.ok for s in self.steps if not s.skipped)
 
+    @property
+    def credits(self) -> float | None:
+        spent = [s.credits for s in self.steps if s.credits is not None]
+        return sum(spent) if spent else None
+
     def summary(self) -> str:
         ran = [s for s in self.steps if not s.skipped]
         good = sum(1 for s in ran if s.ok)
         total_ms = sum(s.duration_ms for s in ran)
         state = "cancelled" if self.cancelled else "finished"
+        # Cost is stated because a kit is several model sessions, and with
+        # connectors wired a single one can run to three figures of credits.
+        cost = f", {self.credits:g} credits" if self.credits is not None else ""
         return (
             f"{self.kit_id} {state}: {good}/{len(ran)} skills answered "
-            f"in {total_ms / 1000:.0f}s"
+            f"in {total_ms / 1000:.0f}s{cost}"
         )
 
 
@@ -188,6 +197,7 @@ def run_kit(
                 error="" if result.ok else result.summary(),
                 resume_command=result.resume_command or "",
                 duration_ms=result.duration_ms,
+                credits=result.credits,
             )
         except Exception as exc:  # noqa: BLE001 - surfaced verbatim to the operator
             step = KitStep(skill_id=skill.id, ok=False, error=str(exc))
