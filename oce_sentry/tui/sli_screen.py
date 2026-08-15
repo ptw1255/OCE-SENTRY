@@ -45,25 +45,6 @@ def _window_label(hours: int) -> str:
     return f"{hours}h"
 
 
-def _sparkline(sli: Sli) -> str:
-    """Trend of the objective gap, not of the raw value.
-
-    Reliability series sit at 99.x%, so a plain value sparkline is a flat line
-    with the interesting part invisible. Scaling by budget burn keeps the shape.
-    """
-    blocks = "▁▂▃▄▅▆▇█"
-    points = [w.value for w in sli.trend if w.value is not None]
-    if len(points) < 2:
-        return ""
-    allowed = max(100.0 - sli.objective, 1e-9)
-    burns = [min((100.0 - v) / allowed, 2.0) for v in points]
-    lowest, highest = min(burns), max(burns)
-    span = highest - lowest
-    if span < 1e-9:
-        return blocks[0] * len(burns)
-    return "".join(blocks[min(int((b - lowest) / span * (len(blocks) - 1)), len(blocks) - 1)] for b in burns)
-
-
 class SliScreen(Screen):
     BINDINGS = [
         Binding("escape,q", "close", "Back"),
@@ -101,7 +82,7 @@ class SliScreen(Screen):
     def on_mount(self) -> None:
         table = self.query_one("#sli-table", DataTable)
         table.add_columns(
-            "SLI", "VALUE", "OBJECTIVE", "WINDOW", "BUDGET", "TREND", "REQUESTS", "FAILURES"
+            "SLI", "VALUE", "OBJECTIVE", "WINDOW", "BUDGET", "REQUESTS", "FAILURES"
         )
         # Column labels are fixed at construction: the breakdown dimension is
         # named in the summary pane instead, because mutating a DataTable
@@ -201,7 +182,6 @@ class SliScreen(Screen):
                 # 30d are very different situations.
                 _window_label(self._data_hours),
                 burn_cell,
-                _sparkline(sli),
                 _fmt_count(sli.denominator),
                 _fmt_count(sli.failures),
             )
@@ -281,6 +261,8 @@ class SliScreen(Screen):
 
     def _set_status(self, message: str) -> None:
         self.query_one("#sli-status", Static).update(message)
+
+
 
 
 

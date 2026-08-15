@@ -6,13 +6,17 @@ Screen {
     height: 1fr;
 }
 
+/* The title column is what an OCE reads first, so the table gets the room.
+   The detail pane is a fixed width rather than a fraction: at 2fr it took 40%
+   of the terminal and squeezed titles down to about eight characters. */
 #incidents {
-    width: 3fr;
+    width: 1fr;
     height: 100%;
 }
 
 #side {
-    width: 2fr;
+    width: 52;
+    min-width: 40;
     height: 100%;
     border-left: solid $panel;
 }
@@ -137,3 +141,38 @@ CreateBugScreen {
 #bug-form-buttons Button {
     margin-right: 2;
 }
+
+
+#kit-body {
+    height: 1fr;
+}
+
+#kit-table {
+    height: auto;
+    max-height: 45%;
+}
+
+#kit-detail {
+    height: 1fr;
+    border-top: solid $panel;
+}
+
+#kit-summary {
+    width: 44;
+    padding: 1 2;
+}
+
+#kit-content {
+    width: 1fr;
+    padding: 1 2;
+    border-left: solid $panel;
+    overflow-y: auto;
+}
+
+#kit-status {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+}
+

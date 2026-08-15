@@ -19,7 +19,7 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Footer, Header, Label, RichLog, Static
 
 from ..actions import Action, ActionRun, actions_for, build_command, discover_kits, run_action
@@ -73,20 +73,27 @@ class ConfirmRun(ModalScreen[bool]):
         self.dismiss(False)
 
 
-class OceSentryApp(App):
-    CSS_PATH = "styles.tcss"
-    TITLE = "OCE Sentry"
+class IncidentScreen(Screen):
+    """The incident queue.
+
+    A Screen rather than the App itself so its bindings stay scoped to it. The
+    footer merges App-level bindings into every screen, and advertising "Run"
+    on the SLI view is worse than not advertising it at all.
+    """
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
-        Binding("o", "open_icm", "Open IcM"),
-        Binding("t", "open_tsg", "Open TSG"),
-        Binding("x", "run_action", "Run action"),
-        Binding("bracketright", "next_action", "Next action"),
-        Binding("bracketleft", "prev_action", "Prev action"),
+        Binding("o", "open_icm", "IcM"),
+        Binding("t", "open_tsg", "TSG"),
+        Binding("x", "run_action", "Run"),
+        # key_display keeps the footer readable: Textual otherwise prints the
+        # key name, and "bracketright Next action" is not something anyone reads.
+        Binding("bracketright", "next_action", "Next action", key_display="]"),
+        Binding("bracketleft", "prev_action", "Prev action", key_display="["),
         Binding("s", "show_slis", "SLIs"),
+        Binding("k", "show_kits", "Kits"),
         Binding("b", "show_bugs", "Bugs"),
-        Binding("c", "create_bug", "Create bug"),
+        Binding("c", "create_bug", "New bug"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -115,7 +122,11 @@ class OceSentryApp(App):
 
     def on_mount(self) -> None:
         table = self.query_one("#incidents", DataTable)
-        table.add_columns("SEV", "AGE", "FLAG", "ENV", "OWNER", "INCIDENT", "TITLE")
+        # Deliberately few columns. Everything dropped here (owner, monitor,
+        # track reason) is one keystroke away in the detail pane, and at a
+        # typical terminal width each extra column is taken directly out of the
+        # title -- which is the column an OCE actually reads.
+        table.add_columns("SEV", "AGE", "FLAG", "ENV", "INCIDENT", "TITLE")
         self._kits = discover_kits(self._config)
         self._log(
             f"[dim]policy {self._config.policy.label} - "
@@ -145,7 +156,7 @@ class OceSentryApp(App):
                 fetched_at=datetime.now(timezone.utc),
                 error=str(exc),
             )
-        self.call_from_thread(self._apply_incidents, generation, result)
+        self.app.call_from_thread(self._apply_incidents, generation, result)
 
     def _apply_incidents(self, generation: int, result: SourceResult) -> None:
         # Discard a completion that a newer refresh has already superseded.
@@ -181,10 +192,9 @@ class OceSentryApp(App):
                 incident.severity_label,
                 _age(incident),
                 _flag(incident),
-                incident.env_class[:12],
-                (incident.owning_contact_alias or "-")[:14],
+                _env(incident),
                 incident.incident_id,
-                incident.title[:90],
+                incident.title[:120],
             )
         # Preserve the operator's place across a refresh.
         if previous is not None:
@@ -272,12 +282,17 @@ class OceSentryApp(App):
         """
         from .sli_screen import SliScreen
 
-        self.push_screen(SliScreen(self._config, self._tokens))
+        self.app.push_screen(SliScreen(self._config, self._tokens))
+
+    def action_show_kits(self) -> None:
+        from .kit_screen import KitScreen
+
+        self.app.push_screen(KitScreen(self._config))
 
     def action_show_bugs(self) -> None:
         from .bug_screen import BugScreen
 
-        self.push_screen(BugScreen(self._config, self._tokens))
+        self.app.push_screen(BugScreen(self._config, self._tokens))
 
     def action_create_bug(self) -> None:
         """File a bug about whatever the operator has just hit.
@@ -292,7 +307,7 @@ class OceSentryApp(App):
                 self._log(f"[green]created bug {created['id']}[/green]: {created['title']}")
                 self._log(f"[dim]{created['url']}[/dim]")
 
-        self.push_screen(CreateBugScreen(self._config, self._tokens, self._current_incident()), _done)
+        self.app.push_screen(CreateBugScreen(self._config, self._tokens, self._current_incident()), _done)
 
     def action_open_icm(self) -> None:
         incident = self._current_incident()
@@ -331,18 +346,18 @@ class OceSentryApp(App):
                 self._log(f"[b]running[/b] {action.id} against {incident.incident_id} ...")
                 self._execute(action, incident)
 
-        self.push_screen(ConfirmRun(action, incident, command), _decide)
+        self.app.push_screen(ConfirmRun(action, incident, command), _decide)
 
     @work(thread=True, group="actions")
     def _execute(self, action: Action, incident: Incident) -> None:
         try:
             run = run_action(action, incident, self._config)
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator verbatim
-            self.call_from_thread(self._log, f"[red]{action.id} could not start: {exc}[/red]")
-            self.call_from_thread(self._clear_busy)
+            self.app.call_from_thread(self._log, f"[red]{action.id} could not start: {exc}[/red]")
+            self.app.call_from_thread(self._clear_busy)
             return
-        self.call_from_thread(self._show_run, run)
-        self.call_from_thread(self._clear_busy)
+        self.app.call_from_thread(self._show_run, run)
+        self.app.call_from_thread(self._clear_busy)
 
     def _clear_busy(self) -> None:
         self._busy = False
@@ -377,6 +392,16 @@ def _age(incident: Incident) -> str:
     return f"{hours:.0f}h" if hours < 100 else f"{hours / 24:.0f}d"
 
 
+#: Four characters is enough to tell the rings apart, and the full value is in
+#: the detail pane.
+_ENV_SHORT = {"UNCLASSIFIED": "UNCL", "PATHFINDER": "PATH", "TRAILBLAZER": "TRLB"}
+
+
+def _env(incident: Incident) -> str:
+    env = incident.env_class or "-"
+    return _ENV_SHORT.get(env, env[:4])
+
+
 def _flag(incident: Incident) -> str:
     if incident.is_customer_impacting:
         return "CUST"
@@ -390,9 +415,33 @@ def _escape(text: str) -> str:
     return str(text).replace("[", r"\[")
 
 
+class OceSentryApp(App):
+    """Thin shell.
+
+    Every view is a Screen so the footer only ever advertises keys that work
+    where you are standing.
+    """
+
+    CSS_PATH = "styles.tcss"
+    TITLE = "OCE Sentry"
+
+    def __init__(self, config: Config, tokens: TokenProvider) -> None:
+        super().__init__()
+        self._config = config
+        self._tokens = tokens
+
+    def on_mount(self) -> None:
+        self.push_screen(IncidentScreen(self._config, self._tokens))
+
+
 def run_app(config: Config, tokens: TokenProvider) -> int:
     OceSentryApp(config, tokens).run()
     return 0
+
+
+
+
+
 
 
 

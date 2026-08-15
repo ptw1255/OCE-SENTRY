@@ -187,6 +187,43 @@ def render_slis(config: Config, tokens: TokenProvider, hours: int = 24) -> int:
     return 0
 
 
+def render_kits(config: Config) -> int:
+    """Headless kit inventory."""
+    from .actions import discover_kits
+
+    if config.kits_dir is None:
+        print("No kit source configured. Set OCE_SENTRY_KITS to a kits/ directory.")
+        return 0
+
+    kits = discover_kits(config)
+    print(f"source     {config.kits_dir}")
+    print(f"kits       {len(kits)}")
+    print()
+    if not kits:
+        return 0
+
+    header = f"{'KIT':<48} {'MONITOR':<34} {'STATE':<11} QUERY"
+    print(header)
+    print("-" * len(header))
+    for action in kits:
+        directory = action.directory
+        has_query = (directory / "investigate.kql").is_file() if directory else False
+        has_card = (directory / "README.md").is_file() if directory else False
+        has_runner = (directory / "run.ps1").is_file() if directory else False
+        complete = has_query and has_card and has_runner
+        lines = 0
+        if has_query:
+            try:
+                lines = len((directory / "investigate.kql").read_text(encoding="utf-8", errors="replace").splitlines())
+            except OSError:
+                lines = 0
+        print(
+            f"{action.id[:48]:<48} {(action.monitor_id or '-')[:34]:<34} "
+            f"{('ok' if complete else 'incomplete'):<11} {lines}L"
+        )
+    return 0
+
+
 def render_bugs(config: Config, tokens: TokenProvider, show_all: bool = False) -> int:
     """Headless bug tracker."""
     from .ado import AdoClient, AdoError, load_board
@@ -382,5 +419,6 @@ def run_once_skill(config: Config, tokens: TokenProvider, incident_id: str, skil
         print("--- stderr ---", file=sys.stderr)
         print(run.stderr.rstrip()[:2000], file=sys.stderr)
     return 0 if run.ok else 1
+
 
 

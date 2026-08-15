@@ -53,6 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Trailing window for --slis (default 24).",
     )
     parser.add_argument(
+        "--kits",
+        action="store_true",
+        help="Show the investigation kit inventory and exit.",
+    )
+    parser.add_argument(
         "--bugs",
         action="store_true",
         help="Show tracked ADO bugs and exit.",
@@ -108,6 +113,11 @@ def main(argv: list[str] | None = None) -> int:
     tokens = TokenProvider()
 
     try:
+        if args.kits:
+            from .cli import render_kits
+
+            return render_kits(config)
+
         if args.bugs:
             from .cli import render_bugs
 
@@ -178,5 +188,6 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
