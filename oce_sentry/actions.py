@@ -23,13 +23,14 @@ from pathlib import Path
 
 from .config import Config
 from .models import Incident, utcnow
+from .skills import Skill
 
 
 @dataclass
 class Action:
     id: str
     title: str
-    kind: str  # "kit" | "link"
+    kind: str  # "kit" | "link" | "skill"
     source: str
     monitor_id: str = ""
     directory: Path | None = None
@@ -38,10 +39,16 @@ class Action:
     #: declare its effects is treated as if it writes.
     writes: list[str] = field(default_factory=list)
     base_rate: dict[str, str] = field(default_factory=dict)
+    #: Present for kind == "skill".
+    skill: Skill | None = None
 
     @property
     def read_only(self) -> bool:
         return not self.writes
+
+    @property
+    def needs_shell(self) -> bool:
+        return bool(self.skill and self.skill.needs_shell)
 
 
 @dataclass
@@ -170,6 +177,39 @@ def actions_for(incident: Incident, actions: list[Action]) -> list[Action]:
             )
         )
     return matches
+
+
+def skill_action(skill: Skill) -> Action:
+    """Adapt a skill into the action list.
+
+    Skills sit alongside kits and links so an operator learns one interaction
+    rather than three. A skill is read-only unless it has opted into shell,
+    which is declared here so the confirmation can say so before it runs.
+    """
+    return Action(
+        id=skill.id,
+        title=skill.name,
+        kind="skill",
+        source=skill.source,
+        monitor_id=skill.monitor_id,
+        directory=skill.directory,
+        writes=["shell access (full, as you)"] if skill.needs_shell else [],
+        skill=skill,
+    )
+
+
+def all_actions_for(incident: Incident, kits: list[Action], skills: list[Skill]) -> list[Action]:
+    """Everything offered for one incident.
+
+    Kits first: a precomputed base rate or a schema-verified query is cheaper
+    and more certain than asking a model. Skills after, then links.
+    """
+    from .skills import skills_for
+
+    kit_matches = [a for a in actions_for(incident, kits) if a.kind == "kit"]
+    skill_matches = [skill_action(s) for s in skills_for(incident, skills)]
+    links = [a for a in actions_for(incident, kits) if a.kind == "link"]
+    return kit_matches + skill_matches + links
 
 
 def _find_pwsh() -> str:

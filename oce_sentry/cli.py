@@ -123,7 +123,73 @@ def render_actions(config: Config, tokens: TokenProvider, incident_id: str) -> i
     return 0
 
 
-def run_once_action(config: Config, tokens: TokenProvider, incident_id: str, action_id: str) -> int:
+def run_once_skill(config: Config, tokens: TokenProvider, incident_id: str, skill_id: str) -> int:
+    """Headless skill execution.
+
+    Parity with the TUI matters here for the same reason `--once` exists: the
+    console should be usable by a script, a pipeline, or an agent that cannot
+    drive a terminal UI.
+    """
+    from .copilot import CopilotUnavailable, run_skill, shell_escalation_enabled
+    from .packs import build_pack, prune_packs
+    from .skills import discover_skills
+
+    client = KustoClient(tokens, timeout=config.query_timeout)
+    result = fetch_incidents(config, client)
+    if not result.ok:
+        print(f"incidents unavailable: {result.error}", file=sys.stderr)
+        return 1
+
+    match = next((i for i in result.data if i.incident_id == str(incident_id)), None)
+    if match is None:
+        print(f"Incident {incident_id} is not in the open in-scope queue.", file=sys.stderr)
+        return 1
+
+    skill = next((s for s in discover_skills(config) if s.id == skill_id), None)
+    if skill is None:
+        available = ", ".join(s.id for s in discover_skills(config))
+        print(f"No skill {skill_id!r}. Available: {available}", file=sys.stderr)
+        return 1
+    if not skill.ok:
+        print(f"Skill {skill_id!r} is unusable: {skill.error}", file=sys.stderr)
+        return 1
+
+    kits = [a for a in actions_for(match, discover_kits(config)) if a.kind == "kit"]
+    pack = build_pack(match, config, kits=kits)
+
+    allow_shell = skill.needs_shell and shell_escalation_enabled()
+    if skill.needs_shell and not allow_shell:
+        print(
+            "This skill asks for shell access, which is disabled on this machine.\n"
+            "Set OCE_SENTRY_ALLOW_SKILL_SHELL=1 to permit it. Running without shell.",
+            file=sys.stderr,
+        )
+
+    print(f"running skill {skill.id} against {match.incident_id}")
+    print(f"  pack:  {pack.directory}")
+    print(f"  shell: {'ALLOWED (full, as you)' if allow_shell else 'denied'}")
+    print()
+
+    try:
+        run = run_skill(skill, match, pack, config, allow_shell=allow_shell, on_line=None)
+    except CopilotUnavailable as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    print(run.answer or "(no answer)")
+    print()
+    print(f"  {run.summary()}")
+    if run.output_path:
+        print(f"  saved:  {run.output_path}")
+    if run.resume_command:
+        print(f"  resume: {run.resume_command}")
+    if run.stderr.strip():
+        print("--- stderr ---", file=sys.stderr)
+        print(run.stderr.strip()[:2000], file=sys.stderr)
+
+    prune_packs(config)
+    return 0 if run.ok else 1
+
     client = KustoClient(tokens, timeout=config.query_timeout)
     result = fetch_incidents(config, client)
     if not result.ok:
@@ -153,3 +219,4 @@ def run_once_action(config: Config, tokens: TokenProvider, incident_id: str, act
         print("--- stderr ---", file=sys.stderr)
         print(run.stderr.rstrip()[:2000], file=sys.stderr)
     return 0 if run.ok else 1
+
