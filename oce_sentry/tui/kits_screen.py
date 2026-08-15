@@ -15,9 +15,9 @@ from __future__ import annotations
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import DataTable, Footer, Header, Label, RichLog, Static
+from textual.widgets import DataTable, Footer, Header, Label, Static
 
 from ..kits import Kit, KitStep, load_kits, run_kit
 from ..models import Incident
@@ -86,14 +86,17 @@ class KitsScreen(Screen):
         self._kits: list[Kit] = []
         self._busy = False
         self._cancel = False
+        self._pane = "detail"
+        self._output: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(id="kit-body"):
             yield DataTable(id="kit-table", cursor_type="row", zebra_stripes=True)
-            with Horizontal(id="kit-detail"):
+            # One pane, same as the skill browser: the kit's steps while
+            # browsing, the run's output while it is running.
+            with VerticalScroll(id="kit-detail"):
                 yield Static("", id="kit-summary")
-                yield RichLog(id="kit-output", wrap=True, markup=True, highlight=False)
         yield Static("", id="kit-status")
         yield Footer()
 
@@ -131,7 +134,8 @@ class KitsScreen(Screen):
         else:
             context = "no incident selected - pick one on the queue before running"
         self._set_status(f"{len(self._kits)} kit(s), {ready} runnable - {context}")
-        self._render_detail()
+        # Respect the pane state so a refresh cannot wipe a run's output.
+        self._render_pane()
 
     # ---------------------------------------------------------------- detail
 
@@ -143,6 +147,7 @@ class KitsScreen(Screen):
         return self._kits[row]
 
     def on_data_table_row_highlighted(self) -> None:
+        self._pane = "detail"
         self._render_detail()
 
     def _render_detail(self) -> None:
@@ -278,7 +283,22 @@ class KitsScreen(Screen):
         self.app.push_screen(LibraryScreen(self._config, self._tokens, self._incident))
 
     def _log(self, message: str) -> None:
-        self.query_one("#kit-output", RichLog).write(message)
+        """Append to the run output and show it.
+
+        A kit run streams several skills' answers, which is exactly when the
+        operator wants the whole pane rather than half of it.
+        """
+        self._output.append(message)
+        self._pane = "output"
+        self._render_pane()
+
+    def _render_pane(self) -> None:
+        if self._pane == "output":
+            body = "\n".join(self._output[-600:]) or "(no output)"
+            hint = "\n\n[dim]Move the cursor to go back to the kit detail.[/dim]"
+            self.query_one("#kit-summary", Static).update(body + hint)
+        else:
+            self._render_detail()
 
     def action_close(self) -> None:
         self.dismiss()

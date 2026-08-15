@@ -163,7 +163,17 @@ def build_catalog(
     config,
     incident: Incident | None = None,
     include_maintenance: bool = False,
+    include_queries: bool = False,
 ) -> list[CatalogEntry]:
+    """The skill browser's contents.
+
+    `include_queries` adds the fleet's Kusto kits. Off by default: they are a
+    different concept from a skill -- a generated query folder keyed to one
+    monitor -- and listing them here was a leftover from before kits and
+    skills were separated. They stay reachable where they are useful: the
+    queue runs the monitor-matched one with `x` and shows its verdict, and
+    `--query-kits` lists the inventory.
+    """
     entries: list[CatalogEntry] = []
 
     for skill in discover_skills(config):
@@ -193,7 +203,7 @@ def build_catalog(
             )
         )
 
-    for action in discover_kits(config):
+    for action in discover_kits(config) if include_queries else []:
         directory = action.directory
         entries.append(
             CatalogEntry(

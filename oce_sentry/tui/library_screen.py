@@ -17,9 +17,9 @@ import webbrowser
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
+from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from ..catalog import CatalogEntry, build_catalog, count_maintenance
 from ..models import Incident
@@ -47,15 +47,21 @@ class LibraryScreen(Screen):
         self._busy = False
         self._filter = ""
         self._show_maintenance = False
+        #: "detail" while browsing, "output" while a run is producing text.
+        self._pane = "detail"
+        self._output: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(id="lib-body"):
             yield Input(placeholder="filter by name or source", id="lib-filter")
             yield DataTable(id="lib-table", cursor_type="row", zebra_stripes=True)
-            with Horizontal(id="lib-detail"):
+            # One pane below the table, not two. It shows the highlighted
+            # skill, and switches to the run's output while one is running --
+            # which is the only time the old right-hand log had anything in
+            # it, and it cost half the width for the rest of the session.
+            with VerticalScroll(id="lib-detail"):
                 yield Static("", id="lib-summary")
-                yield RichLog(id="lib-output", wrap=True, markup=True, highlight=False)
         yield Static("", id="lib-status")
         yield Footer()
 
@@ -128,7 +134,9 @@ class LibraryScreen(Screen):
         self._set_status(
             f"{len(self._entries)} action(s), {runnable} runnable here - {context}{suffix}"
         )
-        self._render_detail()
+        # Respect the pane state: a refresh must not wipe a finished run's
+        # output out from under the operator reading it.
+        self._render_pane()
 
     # ---------------------------------------------------------------- filter
 
@@ -184,10 +192,13 @@ class LibraryScreen(Screen):
         return self._entries[row]
 
     def on_data_table_row_highlighted(self) -> None:
+        # Moving the cursor is how you get back from a finished run's output.
+        self._pane = "detail"
         self._render_detail()
 
     def action_toggle_view(self) -> None:
         self._view = "source" if self._view == "detail" else "detail"
+        self._pane = "detail"
         self._render_detail()
 
     def _render_detail(self) -> None:
@@ -306,7 +317,22 @@ class LibraryScreen(Screen):
     # ---------------------------------------------------------------- chrome
 
     def _log(self, message: str) -> None:
-        self.query_one("#lib-output", RichLog).write(message)
+        """Append to the run output and show it.
+
+        Running is the one time an operator wants the whole pane for output,
+        so it takes over rather than sharing width with the detail.
+        """
+        self._output.append(message)
+        self._pane = "output"
+        self._render_pane()
+
+    def _render_pane(self) -> None:
+        if self._pane == "output":
+            body = "\n".join(self._output[-400:]) or "(no output)"
+            hint = "\n\n[dim]Move the cursor to go back to the skill detail.[/dim]"
+            self.query_one("#lib-summary", Static).update(body + hint)
+        else:
+            self._render_detail()
 
     def action_close(self) -> None:
         self.dismiss()

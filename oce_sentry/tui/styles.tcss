@@ -222,21 +222,17 @@ CreateBugScreen {
     max-height: 50%;
 }
 
+/* One full-width pane below the table: the highlighted skill while browsing,
+   the run output while running. The old right-hand log was only ever used
+   during a run and cost half the width the rest of the time. */
 #lib-detail {
     height: 1fr;
     border-top: solid $panel;
 }
 
 #lib-summary {
-    width: 52;
-    padding: 1 2;
-    overflow-y: auto;
-}
-
-#lib-output {
     width: 1fr;
-    padding: 0 2;
-    border-left: solid $panel;
+    padding: 1 2;
 }
 
 #lib-status {
@@ -265,21 +261,15 @@ CreateBugScreen {
     max-height: 45%;
 }
 
+/* Same single-pane shape as the skill browser. */
 #kit-detail {
     height: 1fr;
     border-top: solid $panel;
 }
 
 #kit-summary {
-    width: 62;
-    padding: 1 2;
-    overflow-y: auto;
-}
-
-#kit-output {
     width: 1fr;
-    padding: 0 2;
-    border-left: solid $panel;
+    padding: 1 2;
 }
 
 #kit-status {
