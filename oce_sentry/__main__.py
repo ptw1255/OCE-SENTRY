@@ -55,7 +55,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--kits",
         action="store_true",
-        help="Show the investigation kit inventory and exit.",
+        help="List kits (skill playbooks) and exit.",
+    )
+    parser.add_argument(
+        "--kit",
+        metavar="ID",
+        help="Run a kit against --incident: every skill in it, in order.",
+    )
+    parser.add_argument(
+        "--query-kits",
+        action="store_true",
+        help="Show the fleet's Kusto investigation kit inventory and exit.",
     )
     parser.add_argument(
         "--bugs",
@@ -117,6 +127,19 @@ def main(argv: list[str] | None = None) -> int:
             from .cli import render_kits
 
             return render_kits(config)
+
+        if args.query_kits:
+            from .cli import render_query_kits
+
+            return render_query_kits(config)
+
+        if args.kit:
+            if not args.incident:
+                print("--kit needs --incident.", file=sys.stderr)
+                return 2
+            from .cli import run_kit_cli
+
+            return run_kit_cli(config, tokens, args.kit, args.incident)
 
         if args.bugs:
             from .cli import render_bugs

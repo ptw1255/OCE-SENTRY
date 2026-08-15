@@ -188,7 +188,101 @@ def render_slis(config: Config, tokens: TokenProvider, hours: int = 24) -> int:
 
 
 def render_kits(config: Config) -> int:
-    """Headless kit inventory."""
+    """Headless kit list: the playbooks, not the Kusto inventory."""
+    from .kits import load_kits
+
+    kits = load_kits(config)
+    print(f"kits       {len(kits)} declared")
+    print()
+
+    header = f"{'KIT':<22} {'SKILLS':<18} {'STATUS':<12} ANSWERS"
+    print(header)
+    print("-" * len(header))
+    for kit in kits:
+        if not kit.available:
+            status = "unavailable"
+        elif kit.missing:
+            status = "partial"
+        else:
+            status = "ready"
+        print(f"{kit.id[:22]:<22} {kit.coverage[:18]:<18} {status:<12} {kit.question[:44]}")
+
+    incomplete = [k for k in kits if k.missing]
+    if incomplete:
+        print()
+        print("Missing skills (clone the source and set OCE_SENTRY_SKILLS):")
+        for kit in incomplete:
+            print(f"  {kit.id:<22} {', '.join(kit.missing)}")
+    return 0
+
+
+def run_kit_cli(
+    config: Config,
+    tokens: TokenProvider,
+    kit_id: str,
+    incident_id: str,
+) -> int:
+    """Run a kit against one incident, streaming each skill as it lands."""
+    from .kits import find_kit, run_kit
+
+    kit = find_kit(config, kit_id)
+    if kit is None:
+        from .kits import load_kits
+
+        available = ", ".join(k.id for k in load_kits(config))
+        print(f"No kit {kit_id!r}. Available: {available}", file=sys.stderr)
+        return 1
+    if not kit.available:
+        print(
+            f"Kit {kit_id!r} has none of its skills installed: {', '.join(kit.missing)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    client = KustoClient(tokens, timeout=config.query_timeout)
+    result = fetch_incidents(config, client)
+    if not result.ok:
+        print(f"incidents unavailable: {result.error}", file=sys.stderr)
+        return 1
+
+    match = next((i for i in result.incidents if i.incident_id == incident_id), None)
+    if match is None:
+        print(f"Incident {incident_id} is not on the watchlist.", file=sys.stderr)
+        return 1
+
+    print(f"{kit.name}: {kit.question}")
+    print(f"incident   {match.incident_id}  {match.title[:60]}")
+    print(f"running    {len(kit.skills)} skill(s), sequential, shell denied")
+    if kit.missing:
+        print(f"skipping   {', '.join(kit.missing)} (not installed)")
+    print()
+
+    def on_event(phase, skill_id, step):
+        if phase == "start":
+            print(f"-> {skill_id} ...", flush=True)
+            return
+        if step.ok:
+            print(f"   {skill_id} answered in {step.duration_ms / 1000:.0f}s")
+            for line in (step.answer or "(no answer)").splitlines()[:20]:
+                print(f"     {line}")
+        else:
+            print(f"   {skill_id} FAILED: {step.error}", file=sys.stderr)
+        if step.resume_command:
+            print(f"     {step.resume_command}")
+        print()
+
+    run = run_kit(kit, match, config, on_event=on_event)
+    print(run.summary())
+    return 0 if run.ok else 1
+
+
+def render_query_kits(config: Config) -> int:
+    """Headless inventory of the fleet's Kusto investigation kits.
+
+    Distinct from `render_kits`: these are generated query folders keyed to a
+    monitor, not playbooks over skills. They shared the name "kit" for a while
+    and that ambiguity is exactly what the split fixed.
+    """
     from .actions import discover_kits
 
     if config.kits_dir is None:

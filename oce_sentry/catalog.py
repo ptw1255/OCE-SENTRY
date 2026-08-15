@@ -23,12 +23,11 @@ from .skills import Skill, discover_skills
 
 #: Ordered by how a human should reach for them: reasoning that works on any
 #: incident first, then condition-specific queries, then plain links.
-SOURCE_ORDER = {"skill": 0, "kusto": 1, "rca": 2, "link": 3}
+SOURCE_ORDER = {"skill": 0, "kusto": 1, "link": 2}
 
 SOURCE_LABEL = {
     "skill": "skill",
     "kusto": "kusto",
-    "rca": "rca",
     "link": "link",
 }
 
@@ -72,7 +71,7 @@ class CatalogEntry:
 
     id: str
     name: str
-    source: str  # skill | kusto | rca | link
+    source: str  # skill | kusto | link
     description: str = ""
     #: Empty means it applies to any incident, which is true of most skills.
     monitor_id: str = ""
@@ -104,7 +103,7 @@ class CatalogEntry:
     def executes(self) -> str:
         if self.source == "link":
             return "opens in a browser"
-        if self.source in ("skill", "rca"):
+        if self.source == "skill":
             shell = "shell ALLOWED" if self.needs_shell else "no shell"
             return f"copilot, {shell}"
         return "kusto query, local"
@@ -183,7 +182,7 @@ def build_catalog(
             CatalogEntry(
                 id=skill.id,
                 name=skill.name,
-                source="rca" if skill.source == "configured" else "skill",
+                source="skill",
                 description=skill.description,
                 monitor_id=skill.monitor_id,
                 directory=skill.directory,

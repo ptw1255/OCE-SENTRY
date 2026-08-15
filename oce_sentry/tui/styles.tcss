@@ -246,3 +246,45 @@ CreateBugScreen {
     color: $text-muted;
 }
 
+
+/* Skill browser: the filter box only exists while filtering, so it takes no
+   vertical space from the table until it is shown. */
+#lib-filter {
+    height: 3;
+    margin: 0 1;
+}
+
+/* Kits view. Same shape as the skill browser on purpose: the two screens are
+   siblings and moving between them should not move anything on screen. */
+#kit-body {
+    height: 1fr;
+}
+
+#kit-table {
+    height: auto;
+    max-height: 45%;
+}
+
+#kit-detail {
+    height: 1fr;
+    border-top: solid $panel;
+}
+
+#kit-summary {
+    width: 62;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+#kit-output {
+    width: 1fr;
+    padding: 0 2;
+    border-left: solid $panel;
+}
+
+#kit-status {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+}

@@ -13,7 +13,12 @@ from oce_sentry.copilot import (
     shell_escalation_enabled,
 )
 from oce_sentry.packs import ContextPack
-from oce_sentry.skills import Skill, discover_skills, skills_for
+from oce_sentry.skills import (
+    Skill,
+    discover_skills,
+    load_internal_skill,
+    skills_for,
+)
 from oce_sentry.models import Incident
 
 
@@ -60,23 +65,42 @@ def _pack(tmp_path: Path) -> ContextPack:
     return ContextPack(directory=tmp_path, incident_id="850000001", files=[])
 
 
-def test_bundled_skills_are_discovered():
+def test_discovery_is_ado_only():
+    """Sentry lists ODSP's ADO-owned skills and nothing else.
+
+    Bundled skills and the operator's personal `~/.copilot/skills` were both
+    removed as sources: an incident console that lists a writing-voice skill
+    beside a mitigation skill has stopped being an incident console.
+    """
+    skills = discover_skills(None)
+    assert all(s.source == "ado" for s in skills), {
+        s.id: s.source for s in skills if s.source != "ado"
+    }
+
+
+def test_sentrys_own_skills_are_not_browsable():
     ids = {s.id for s in discover_skills(None)}
-    assert {"assess-blast-radius", "draft-enrichment", "handover-note"} <= ids
+    assert not ({"assess-blast-radius", "draft-enrichment", "handover-note"} & ids)
 
 
-def test_bundled_skills_parse_cleanly():
-    for skill in discover_skills(None):
-        if skill.source != "bundled":
-            continue
-        assert skill.ok, f"{skill.id}: {skill.error}"
-        assert skill.name and skill.description and skill.body
+def test_file_bug_still_loads_internally():
+    """Create Bug depends on it, so removing it from discovery must not break it."""
+    skill = load_internal_skill("file-bug")
+    assert skill is not None and skill.ok
+    assert skill.source == "internal"
+    assert not skill.needs_shell
+    # And it stays out of the browsable list.
+    assert "file-bug" not in {s.id for s in discover_skills(None)}
 
 
-def test_bundled_skills_do_not_ask_for_shell():
-    # Shipping a skill that needs shell would make escalation the default
-    # experience rather than an exception.
-    assert all(not s.needs_shell for s in discover_skills(None) if s.source == "bundled")
+def test_internal_skill_lookup_is_bounded_to_bundled():
+    assert load_internal_skill("does-not-exist") is None
+
+
+def test_no_skill_source_without_configuration(monkeypatch):
+    """With nothing configured there are no skills, rather than a fallback set."""
+    monkeypatch.delenv("OCE_SENTRY_SKILLS", raising=False)
+    assert discover_skills(None) == []
 
 
 def test_skill_without_monitor_applies_to_every_incident():

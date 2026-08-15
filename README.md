@@ -126,14 +126,41 @@ The headline is the **error budget**, not the percentage. An SLI reading 99.89% 
 
 Adding a third SLI is a config change, not a release: point `OCE_SENTRY_SLI_REGISTRY` at a JSON file of `{id, name, table, objective, description}` entries.
 
-### The action library
+### Kits
 
-`k` opens every action an OCE can run, in one list, bound to the incident selected on the queue. `x` runs the highlighted one.
+`k` opens **Kits**: named playbooks that run several skills, in order, against the incident selected on the queue. Each is named for the question it answers, because that is what you are holding when you open the screen.
+
+```
+KIT                ANSWERS                                          SKILLS    STATUS
+First look         Is this real, and how big is it?                 3 skills  ready
+What changed       Did a deployment, flight, or code change…        3 skills  ready
+Infrastructure…    Is the platform underneath the service…          4 skills  ready
+Customer impact    Who is affected, and what do we owe them?        4 skills  ready
+Close out          It is mitigated. Is the ticket good enough…      2 skills  ready
+```
+
+`x` runs one — after a confirmation that lists the skills by name, because a kit is several model sessions against production evidence and not something to trigger by leaning on a key. Results stream in as each skill lands; `c` stops the run after the current skill, which is what "stop" honestly means when a Copilot session cannot be safely killed mid-flight.
+
+Four rules keep a kit trustworthy, all enforced by tests:
+
+- **No kit contains a skill that writes.** Writes stay deliberate and single — a batch run is the worst place to discover a side effect.
+- **Shell is denied**, regardless of what a skill asks for.
+- **Missing skills are skipped, never substituted**, and the kit reports itself as `2 of 4 installed` rather than running short quietly.
+- **Four skills is the ceiling.** Past that nobody reads the output, which is the same failure as not running it.
+
+```powershell
+oce-sentry --kits                                  # list kits and their readiness
+oce-sentry --kit first-look --incident 836736526   # run one, headless
+```
+
+### The skill browser
+
+`l` opens every individual action, one row per thing you can run on its own — 56 curated actions with the ADO sources wired up. `x` runs the highlighted one, `/` filters, `a` reveals the fleet-maintenance skills hidden by default.
 
 ```
 SOURCE  ACTION                        APPLIES TO          EXECUTES            EFFECT
-skill   Assess blast radius           any incident        copilot, no shell   read-only
-skill   Draft the IcM enrichment      any incident        copilot, no shell   read-only
+skill   Centralized ICM triage        any incident        copilot, no shell   read-only
+skill   Decode SPO correlation IDs    any incident        copilot, no shell   read-only
 kusto   The Analysis Module QoS is…   AnalysisModuleQos   kusto query, local  writes
 link    Open the TSG for this…        incident with TSG   opens in a browser  read-only
 ```
@@ -153,14 +180,17 @@ For a kusto kit, **the verdict leads** — the conclusion its base-rate card rea
 That sentence is usually the whole answer, and it costs no query to read.
 
 ```powershell
-oce-sentry --kits    # the same library, headless
+oce-sentry --skills       # every discovered skill
+oce-sentry --query-kits   # the fleet's Kusto kit inventory
 ```
 
 ### Where skills come from
 
-Sentry ships four skills; everything else is discovered from directories you point it at with `OCE_SENTRY_SKILLS` (a list, separated by the platform path separator). With the ODSP SRE skills collection and the live site agent wired up, the library carries **63 incident actions**.
+Sentry lists **only** skills ODSP owns in Azure DevOps, discovered from the directories you point it at with `OCE_SENTRY_SKILLS` (a list, separated by the platform path separator). With the ODSP SRE skills collection and the live site agent wired up, that is **56 curated incident actions**.
 
-See **[docs/SKILL-SOURCES.md](docs/SKILL-SOURCES.md)** for what is worth adding and how to clone it — including `correlation-ai` (decode a correlation ID into Geneva links), `pr-detective` (which recent PR caused this), `parse-stack` (Watson stack to symbols), the central SRE skills (`icm`, `mitigation`, `outage-pattern`, `fcm`), and the public sources worth adapting.
+Personal `~/.copilot/skills` and Sentry's own bundled skills are deliberately **not** discovered: an OCE should be running what the SRE team maintains and reviews, not whatever happens to be installed locally. With nothing configured the library is empty, which is a clearer signal than a fallback set.
+
+See **[docs/SKILL-SOURCES.md](docs/SKILL-SOURCES.md)** for how to clone the sources — including `correlation-ai` (decode a correlation ID into Geneva links), `pr-detective` (which recent PR caused this), `parse-stack` (Watson stack to symbols), and the central SRE skills (`icm`, `mitigation`, `outage-pattern`, `fcm`).
 
 Skills that build or maintain the agent fleet rather than work an incident — `generate-skill`, `onboard-team`, `devbox`, the `eval-*` harnesses — are hidden by default and reachable with `a`. A console listing "onboard a team" beside "assess blast radius" has the same problem as a queue that shows everything.
 

@@ -1,13 +1,13 @@
-"""The action library.
+"""The Skill Browser.
 
-Everything an on-call engineer can run, in one list: skills that reason through
-Copilot, investigation kits that run a verified Kusto query, and links. Grouped
-by source, each row runnable against the incident selected on the queue.
+Every individual skill ODSP maintains in Azure DevOps, plus the condition
+specific Kusto kits and the incident's TSG link -- one row per thing you can
+run on its own. Kits, which run several skills as a playbook, are a separate
+screen.
 
-Previously this screen was an inventory of fleet-generated artifacts, and the
-things an OCE could actually run only appeared on an incident whose monitor id
-happened to match -- which for most of the queue is never, so most of the
-library was invisible most of the time.
+This is the browse-and-pick surface: 50-odd skills is too many to scan under
+pressure, so it carries a source filter and hides fleet-maintenance skills by
+default.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, RichLog, Static
+from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
 from ..catalog import CatalogEntry, build_catalog, count_maintenance
 from ..models import Incident
@@ -34,6 +34,7 @@ class LibraryScreen(Screen):
         Binding("o", "open_source", "Open folder"),
         Binding("a", "toggle_maintenance", "Show all"),
         Binding("slash", "filter", "Filter", key_display="/"),
+        Binding("k", "show_kits", "Kits"),
     ]
 
     def __init__(self, config, tokens, incident: Incident | None = None) -> None:
@@ -44,10 +45,13 @@ class LibraryScreen(Screen):
         self._entries: list[CatalogEntry] = []
         self._view = "detail"
         self._busy = False
+        self._filter = ""
+        self._show_maintenance = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(id="lib-body"):
+            yield Input(placeholder="filter by name or source", id="lib-filter")
             yield DataTable(id="lib-table", cursor_type="row", zebra_stripes=True)
             with Horizontal(id="lib-detail"):
                 yield Static("", id="lib-summary")
@@ -59,6 +63,11 @@ class LibraryScreen(Screen):
         self.query_one("#lib-table", DataTable).add_columns(
             "SOURCE", "ACTION", "APPLIES TO", "EXECUTES", "EFFECT"
         )
+        # Hidden is not the same as inert. An Input that is merely undisplayed
+        # still sits in the focus chain and swallows every keystroke, so `a`
+        # and `/` were being typed into an invisible box instead of firing
+        # their bindings. Disabling it takes it out of the chain entirely.
+        self._hide_filter(initial=True)
         self.refresh_catalog()
 
     # ------------------------------------------------------------------ load
@@ -67,7 +76,15 @@ class LibraryScreen(Screen):
         self.refresh_catalog()
 
     def refresh_catalog(self) -> None:
-        self._entries = build_catalog(self._config, self._incident)
+        self._entries = [
+            entry
+            for entry in build_catalog(
+                self._config,
+                self._incident,
+                include_maintenance=self._show_maintenance,
+            )
+            if self._matches(entry)
+        ]
         table = self.query_one("#lib-table", DataTable)
         table.clear()
 
@@ -112,6 +129,50 @@ class LibraryScreen(Screen):
             f"{len(self._entries)} action(s), {runnable} runnable here - {context}{suffix}"
         )
         self._render_detail()
+
+    # ---------------------------------------------------------------- filter
+
+    def _matches(self, entry: CatalogEntry) -> bool:
+        """Substring match over the two fields an operator searches by.
+
+        Name and source, not description: descriptions are long enough that
+        matching them returns most of the list for most queries, which is the
+        same as not filtering.
+        """
+        if not self._filter:
+            return True
+        needle = self._filter.lower()
+        return needle in entry.name.lower() or needle in entry.source.lower()
+
+    def action_filter(self) -> None:
+        box = self.query_one("#lib-filter", Input)
+        box.disabled = False
+        box.display = True
+        box.focus()
+
+    def _hide_filter(self, initial: bool = False) -> None:
+        box = self.query_one("#lib-filter", Input)
+        box.value = ""
+        box.display = False
+        box.disabled = True
+        self._filter = ""
+        self.query_one("#lib-table", DataTable).focus()
+        if not initial:
+            self.refresh_catalog()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "lib-filter":
+            self._filter = event.value.strip()
+            self.refresh_catalog()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Return hands focus back to the table but keeps the filter applied."""
+        if event.input.id == "lib-filter":
+            self.query_one("#lib-table", DataTable).focus()
+
+    def action_toggle_maintenance(self) -> None:
+        self._show_maintenance = not self._show_maintenance
+        self.refresh_catalog()
 
     # ---------------------------------------------------------------- detail
 
@@ -249,6 +310,26 @@ class LibraryScreen(Screen):
 
     def action_close(self) -> None:
         self.dismiss()
+
+    def action_show_kits(self) -> None:
+        from .kits_screen import KitsScreen
+
+        self.app.push_screen(KitsScreen(self._config, self._tokens, self._incident))
+
+    def on_key(self, event) -> None:
+        """Escape leaves the filter box before it leaves the screen.
+
+        Without this, escape while typing a filter dismisses the whole screen,
+        which loses the operator's place for what reads like a corrective
+        keystroke.
+        """
+        if event.key != "escape":
+            return
+        if not self.query_one("#lib-filter", Input).has_focus:
+            return
+        event.stop()
+        event.prevent_default()
+        self._hide_filter()
 
     def _set_status(self, message: str) -> None:
         self.query_one("#lib-status", Static).update(message)

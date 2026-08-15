@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "_comment": [
+    "A kit is a named, ordered set of skills run against one incident.",
+    "",
+    "Kits exist because the skills are individually good and collectively",
+    "unnavigable: 54 of them, and an on-call engineer mid-incident does not",
+    "want to browse a list, they want to answer a question. Each kit is named",
+    "for the question it answers, not for the skills it contains.",
+    "",
+    "Rules that keep this list honest:",
+    "  - Every id in `skills` must be a real skill id from an ODSP ADO source.",
+    "    A kit that references a missing skill reports itself as incomplete",
+    "    rather than silently running short.",
+    "  - Kits stay small. Four skills is the practical ceiling; past that the",
+    "    operator stops reading the output, which is the same failure as not",
+    "    running it.",
+    "  - Order matters. Cheap and broad first, expensive and narrow last, so a",
+    "    kit cancelled halfway has still produced the useful part.",
+    "  - No kit contains a skill that writes to IcM, ADO, or email. Writes stay",
+    "    deliberate and single: file a bug with `c`, tag an incident on purpose.",
+    "    A batch run is exactly the wrong place to discover a side effect."
+  ],
+  "kits": [
+    {
+      "id": "first-look",
+      "name": "First look",
+      "question": "Is this real, and how big is it?",
+      "when": "The first thing to run on an incident you have not seen before.",
+      "skills": ["icm", "impact", "outage-pattern"]
+    },
+    {
+      "id": "what-changed",
+      "name": "What changed",
+      "question": "Did a deployment, flight, or code change cause this?",
+      "when": "The condition started abruptly and the service was healthy before it.",
+      "skills": ["fcm", "pr-detective", "ado-search"]
+    },
+    {
+      "id": "alert-storm",
+      "name": "Alert storm",
+      "question": "Many alerts fired at once. Is this one problem or many?",
+      "when": "The queue jumps and you need to know what to work first.",
+      "skills": ["triage-fleet", "outage-pattern", "icm-reliability-analysis"]
+    },
+    {
+      "id": "infra-sweep",
+      "name": "Infrastructure sweep",
+      "question": "Is the platform underneath the service unhealthy?",
+      "when": "The application looks fine but requests are failing anyway.",
+      "skills": ["sql", "redis", "network", "dns"]
+    },
+    {
+      "id": "error-hunt",
+      "name": "Error hunt",
+      "question": "The infrastructure is healthy, so what is throwing?",
+      "when": "Failures are real, dependencies are green, and you need the error itself.",
+      "skills": ["unexpected-error", "geterrors", "parse-stack"]
+    },
+    {
+      "id": "customer-impact",
+      "name": "Customer impact",
+      "question": "Who is affected, and what do we owe them?",
+      "when": "A customer is asking, or the incident is heading for escalation.",
+      "skills": [
+        "impact",
+        "get-support-case",
+        "cfl-criteria-evaluator",
+        "sla-credit-calculator"
+      ]
+    },
+    {
+      "id": "meta-media",
+      "name": "MeTA media",
+      "question": "Which media component is failing, and why?",
+      "when": "The incident is owned by MeTA: HTML, PDF, thumbnail, or transcode.",
+      "skills": ["impact", "html", "pdf", "thumbnail"]
+    },
+    {
+      "id": "mitigate",
+      "name": "Mitigate",
+      "question": "What can I actually do to stop this now?",
+      "when": "You understand the condition and need an action, not more evidence.",
+      "skills": ["mitigation", "find-throttle-candidate", "communications"]
+    },
+    {
+      "id": "close-out",
+      "name": "Close out",
+      "question": "It is mitigated. Is the ticket good enough to close?",
+      "when": "Before you resolve, and before handover.",
+      "skills": ["ticket-hygiene", "pir-author"]
+    }
+  ]
+}

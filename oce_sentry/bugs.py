@@ -19,7 +19,7 @@ from datetime import timezone
 from .ado import AdoClient, AdoError, Bug, load_board
 from .models import Incident, utcnow
 from .packs import build_pack
-from .skills import Skill, discover_skills
+from .skills import Skill, load_internal_skill
 
 #: What an OCE is most often filing about. Offered as a starting point rather
 #: than a fixed taxonomy: the free-text note is the real input.
@@ -53,7 +53,14 @@ class BugDraft:
 
 
 def find_skill(config) -> Skill | None:
-    return next((s for s in discover_skills(config) if s.id == "file-bug" and s.ok), None)
+    """The bug-drafting skill.
+
+    Loaded by id rather than through discovery: `file-bug` is machinery behind
+    this action, not something an operator browses to, and discovery now lists
+    only ODSP's ADO-owned skills.
+    """
+    skill = load_internal_skill("file-bug")
+    return skill if skill is not None and skill.ok else None
 
 
 def parse_draft(text: str) -> tuple[str, str]:

@@ -1,10 +1,27 @@
 # Skill sources
 
-Where the actions in the library come from, and which are worth wiring up.
+Where the actions in the library come from.
 
-Sentry ships four skills. Everything else is discovered from directories you
-point it at, and nothing is ever copied into this repository — a vendored copy
-of somebody else's skill forks the moment they edit the original.
+Sentry lists only skills ODSP owns in Azure DevOps. Nothing is copied into this
+repository — a vendored copy of somebody else's skill forks the moment they
+edit the original — and nothing is discovered from anywhere else.
+
+Two sources were removed deliberately:
+
+- **`~/.copilot/skills`**, the operator's personal Copilot CLI skills. Whatever
+  someone happens to have installed for their own work is not an incident tool,
+  and personal writing-voice skills were turning up beside mitigation skills.
+- **Sentry's own bundled skills.** An OCE should run what the SRE team
+  maintains and reviews, not a parallel set that exists only here and drifts
+  from it.
+
+One bundled skill survives, unlisted: `file-bug` is machinery behind the Create
+Bug action rather than something you browse to, so it is loaded by id and never
+appears in the library. See `load_internal_skill` in `oce_sentry/skills.py`.
+
+Public GitHub skill repositories are **not** used. They were evaluated and none
+ships an IcM, Geneva or SharePoint skill, so adopting one would have meant
+maintaining a rewrite of someone else's prose against our own systems.
 
 ```powershell
 $repos = "$HOME\repos"
@@ -20,8 +37,46 @@ $repos = "$HOME\repos"
 useful skills live in several repositories at once, so supporting one directory
 would force a choice between them.
 
-Earlier entries win on id collision, so your own copy of a skill beats a shared
-one, and a shared one beats the copy Sentry ships.
+Earlier entries win on id collision.
+
+With nothing configured, Sentry finds no skills at all. That is intentional: an
+empty library is a clear signal to go and clone the sources, whereas a fallback
+set is a quiet invitation to use the wrong thing.
+
+---
+
+## Kits
+
+A **kit** is a named, ordered set of these skills, run against one incident.
+Kits are declared in `oce_sentry/policy/kits.json` and named for the question
+they answer, because that is what an on-call engineer is holding when they open
+the screen — not a skill name.
+
+| Kit | Answers |
+| --- | --- |
+| First look | Is this real, and how big is it? |
+| What changed | Did a deployment, flight, or code change cause this? |
+| Alert storm | Many alerts fired at once. Is this one problem or many? |
+| Infrastructure sweep | Is the platform underneath the service unhealthy? |
+| Error hunt | The infrastructure is healthy, so what is throwing? |
+| Customer impact | Who is affected, and what do we owe them? |
+| MeTA media | Which media component is failing, and why? |
+| Mitigate | What can I actually do to stop this now? |
+| Close out | It is mitigated. Is the ticket good enough to close? |
+
+Rules that keep the list honest, enforced by `tests/test_kits.py`:
+
+- Every declared skill id must resolve on a configured machine. A kit naming a
+  missing skill reports itself incomplete rather than running short — a
+  playbook that silently skips a step produces an answer you will trust more
+  than it deserves.
+- Kits stay at four skills or fewer. Past that the operator stops reading the
+  output, which is the same failure as not running it.
+- **No kit contains a skill that writes** to IcM, ADO, or email. Writes stay
+  deliberate and single. A batch run is the worst place to discover a side
+  effect, because nobody is reading each step before it happens.
+- Order is cheap-and-broad first, so a kit stopped halfway has still produced
+  the useful part.
 
 ---
 
@@ -96,19 +151,4 @@ The full list is `MAINTENANCE_SKILLS` in `oce_sentry/catalog.py`. It is a
 denylist rather than an allowlist so a genuinely new incident skill appears
 without anyone having to add it.
 
----
 
-## Public sources worth adapting
-
-None of these ship an IcM, Geneva or SharePoint skill — those have to be
-written — but the structure and prose are sound.
-
-| Repository | Licence | Why |
-| --- | --- | --- |
-| [`microsoft/azure-skills`](https://github.com/microsoft/azure-skills) | MIT | Microsoft's official Copilot skill plugin. `azure-kusto` is the closest thing to a drop-in KQL authoring skill; `azure-diagnostics` and `azure-reliability` are close in shape to blast-radius work. References Azure MCP tools that Sentry denies, so the prose survives and the tool calls do not |
-| [`github/awesome-copilot`](https://github.com/github/awesome-copilot) | MIT | The canonical `SKILL.md` format spec and catalogue. `docs/README.skills.md` is the authoritative description of the format Sentry parses |
-| [`cocallaw/KQL-ADX-Expert`](https://github.com/cocallaw/KQL-ADX-Expert) | MIT | The deepest public KQL skill: operator reference, annotated patterns, per-service table routing |
-| [`selvarajmurugesan90/ops-engineering-skills`](https://github.com/selvarajmurugesan90/ops-engineering-skills) | Apache-2.0 | 296 ops skills. The `site-reliability-engineering` domain has blameless postmortem, incident response and on-call, SLO/SLI and error-budget design |
-| [`lukemurraynz/SREAgentSkill`](https://github.com/lukemurraynz/SREAgentSkill) | unstated | Not for its content but for its safety model: an explicit L0–L4 autonomy ladder, stop conditions, and "start read-only when ownership is unclear". Close to Sentry's own deny-shell default, and worth reading before widening any permission |
-
-A licence that is not stated is not a licence. Read before copying.

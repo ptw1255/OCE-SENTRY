@@ -1,9 +1,20 @@
 """Skill discovery.
 
-Skills are `SKILL.md` directories. Sentry ships a couple of its own and
-discovers the rest from configured sources; it never copies someone else's
-skill into this repository, for the same reason it never vendors a runbook --
-a copy forks the moment its owner edits the original.
+Skills are `SKILL.md` directories, and Sentry lists only the ones ODSP owns in
+Azure DevOps. It never copies someone else's skill into this repository, for
+the same reason it never vendors a runbook -- a copy forks the moment its owner
+edits the original.
+
+Two sources were deliberately removed. `~/.copilot/skills` pulled in whatever
+the operator happened to have installed for their own use, so personal
+writing-voice skills turned up in an incident console. Sentry's own bundled
+skills were removed on the same principle: an OCE should be running what the
+SRE team maintains and reviews, not a parallel set that only exists here and
+drifts from it.
+
+One bundled skill survives, unlisted: `file-bug` is machinery behind the Create
+Bug action rather than something an operator browses to, and it is loaded by id
+through `load_internal_skill` instead of appearing in discovery.
 
 Front matter is optional. A skill with none is still runnable; it simply has no
 opinion about which incidents it applies to.
@@ -148,15 +159,15 @@ def _scan(root: Path, source: str) -> list[Skill]:
 
 
 def skill_sources(config) -> list[tuple[Path, str]]:
-    """Where skills come from, in precedence order.
-
-    A skill defined closer to the operator wins on id collision: their own
-    copy of a skill should beat the one Sentry ships.
+    """Where skills come from: the configured ODSP ADO clones, and nothing else.
 
     `OCE_SENTRY_SKILLS` takes a LIST, separated by the platform path separator.
     The useful skills live in several repositories at once -- the SRE skills
     collection, the live site agent's own skills, and a team's folder inside it
     -- and supporting a single directory forced a choice between them.
+
+    Earlier ids win on collision, so a repository listed first overrides a
+    later copy of the same skill.
     """
     sources: list[tuple[Path, str]] = []
 
@@ -165,12 +176,8 @@ def skill_sources(config) -> list[tuple[Path, str]]:
         for raw in configured.split(os.pathsep):
             raw = raw.strip()
             if raw:
-                sources.append((Path(raw).expanduser(), "configured"))
+                sources.append((Path(raw).expanduser(), "ado"))
 
-    home = Path.home() / ".copilot" / "skills"
-    sources.append((home, "copilot-user"))
-
-    sources.append((BUNDLED_SKILLS, "bundled"))
     return sources
 
 
@@ -179,7 +186,20 @@ def discover_skills(config) -> list[Skill]:
     for root, source in skill_sources(config):
         for skill in _scan(root, source):
             seen.setdefault(skill.id, skill)
-    return sorted(seen.values(), key=lambda s: (s.source != "bundled", s.name.lower()))
+    return sorted(seen.values(), key=lambda s: s.name.lower())
+
+
+def load_internal_skill(skill_id: str) -> Skill | None:
+    """Load a skill Sentry ships for its own machinery, bypassing discovery.
+
+    Only `file-bug` uses this. It backs the Create Bug action, so it has to
+    keep working, but it is not something an operator should find while
+    browsing for an investigation technique.
+    """
+    directory = BUNDLED_SKILLS / skill_id
+    if not directory.is_dir():
+        return None
+    return _load_skill(directory, "internal")
 
 
 def skills_for(incident, skills: list[Skill]) -> list[Skill]:

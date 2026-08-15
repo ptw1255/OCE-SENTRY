@@ -91,7 +91,8 @@ class IncidentScreen(Screen):
         Binding("bracketright", "next_action", "Next action", key_display="]"),
         Binding("bracketleft", "prev_action", "Prev action", key_display="["),
         Binding("s", "show_slis", "SLIs"),
-        Binding("k", "show_kits", "Actions"),
+        Binding("k", "show_kits", "Kits"),
+        Binding("l", "show_skills", "Skills"),
         Binding("b", "show_bugs", "Bugs"),
         Binding("c", "create_bug", "New bug"),
         Binding("q", "quit", "Quit"),
@@ -295,7 +296,15 @@ class IncidentScreen(Screen):
         self.app.push_screen(SliScreen(self._config, self._tokens))
 
     def action_show_kits(self) -> None:
-        """The action library, bound to whatever incident is selected."""
+        """Kits: playbooks that run several skills against the selected incident."""
+        from .kits_screen import KitsScreen
+
+        self.app.push_screen(
+            KitsScreen(self._config, self._tokens, self._current_incident())
+        )
+
+    def action_show_skills(self) -> None:
+        """The skill browser: every individual action, run one at a time."""
         from .library_screen import LibraryScreen
 
         self.app.push_screen(
