@@ -363,7 +363,7 @@ def render_connectors(config: Config) -> int:
         print("Skills cannot reach live data until connectors are wired in.")
         print("Without them a skill can only summarise the evidence pack.")
 
-    from .dataplanes import BASELINE_ACCESS, discover_planes
+    from .dataplanes import BASELINE_ACCESS, discover_planes, reference_repo
 
     planes = discover_planes(config, skills)
     print()
@@ -380,11 +380,22 @@ def render_connectors(config: Config) -> int:
         )
 
     undocumented = [p for p in planes if not p.access.documented]
+    stale = [p for p in planes if p.access.documented and not p.access.live]
     print()
+    repo = reference_repo()
+    if repo is not None:
+        print(f"access read from {repo}")
+    else:
+        print("no RCA checkout found - access shown from the built-in snapshot")
+        print("set OCE_SENTRY_RCA_REPO to read the team's current document")
     print(BASELINE_ACCESS)
     for plane in planes:
         if plane.access.documented:
-            print(f"  {plane.host.split('.')[0]:<26} {plane.access.request_url}")
+            marker = "" if plane.access.live else "  (snapshot)"
+            print(f"  {plane.host.split('.')[0]:<26} {plane.access.request_url}{marker}")
+    if stale:
+        print()
+        print(f"{len(stale)} row(s) came from the built-in snapshot and may be out of date.")
     if undocumented:
         print()
         print(

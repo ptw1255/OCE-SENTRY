@@ -27,13 +27,19 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 #: Clusters whose hostnames are deliberately redacted in the reference. They
 #: are real, but these are not resolvable names, so probing them would report
 #: a failure that says nothing about the operator's access.
 REDACTED = ("-redacted.",)
 
-#: cluster host -> (database, purpose). Transcribed from the RCA reference.
+#: cluster host -> (database, purpose).
+#:
+#: A FALLBACK ONLY. The live values are parsed from the RCA agent's own
+#: `MCP_Servers_Kusto_Cluster_References.md` at runtime -- see `load_registry`.
+#: This copy exists so a machine without that checkout still gets a useful
+#: answer, and it will drift, because Sentry does not own these facts.
 REGISTRY: dict[str, tuple[str, str]] = {
     "icmcluster.kusto.windows.net": (
         "IcmDataWarehouse",
@@ -91,11 +97,10 @@ REGISTRY: dict[str, tuple[str, str]] = {
 
 #: cluster host -> what an operator must hold to query it, and where to ask.
 #:
-#: Transcribed from the RCA agent's ONBOARDING.md "Required Access" table and
-#: the livesite-management-hygiene preflight reference. These are the two
-#: places ODSP documents this, and inventing an entitlement name would send an
-#: on-call engineer to the wrong approval page -- so a cluster with nothing
-#: documented says exactly that instead of guessing.
+#: A FALLBACK ONLY. The live values are parsed from the RCA agent's
+#: ONBOARDING.md at runtime -- see `load_access`. An entitlement that has been
+#: renamed and is still shown from here would send an on-call engineer to an
+#: approver who will reject them, which is why the checkout always wins.
 ACCESS: dict[str, tuple[str, str, str]] = {
     "icmcluster.kusto.windows.net": (
         "IcM-Kusto-Access entitlement",
@@ -146,6 +151,160 @@ ACCESS: dict[str, tuple[str, str, str]] = {
 #: Everything needs this first, whatever else it needs.
 BASELINE_ACCESS = "az login (Azure CLI) - every cluster authenticates through it"
 
+#: Where the RCA agent repository usually is. Its documents are the source of
+#: truth for both the cluster registry and the access requirements; the
+#: dictionaries above are a snapshot for when it is not on this machine.
+_REPO_CANDIDATES = (
+    Path.home() / "repos" / "SRELivesite-RCAAgent",
+    Path.home() / "source" / "repos" / "SRELivesite-RCAAgent",
+)
+
+_ONBOARDING = "ONBOARDING.md"
+_CLUSTER_REFERENCE = Path(".github") / "references" / "MCP_Servers_Kusto_Cluster_References.md"
+
+_HOST_IN_TEXT = re.compile(r"([a-z0-9\-]+(?:\.[a-z0-9\-]+)*\.kusto\.windows\.net)", re.I)
+_MD_LINK = re.compile(r"\[[^\]]*\]\((https?://[^)\s]+)\)")
+
+
+def reference_repo() -> Path | None:
+    """The RCA agent checkout, if this machine has one."""
+    override = os.environ.get("OCE_SENTRY_RCA_REPO")
+    if override:
+        path = Path(override).expanduser()
+        return path if path.is_dir() else None
+    return next((p for p in _REPO_CANDIDATES if p.is_dir()), None)
+
+
+def _clean(cell: str) -> str:
+    return cell.replace("`", "").replace("**", "").strip()
+
+
+def parse_access(path: Path) -> dict[str, tuple[str, str, str]]:
+    """Read the onboarding guide's Required Access table.
+
+    Rows look like:
+
+        | `https://fcmdataro.kusto.windows.net/` | IDWeb group `fcmusers` | [Request access](url) |
+
+    Only rows naming a Kusto host and carrying a link are taken. A row that
+    parses to a requirement without a request link is dropped rather than
+    shown, because a requirement an operator cannot act on is not much better
+    than silence.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+
+    found: dict[str, tuple[str, str, str]] = {}
+    for line in text.splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cells = [c for c in line.split("|")]
+        if len(cells) < 4:
+            continue
+        host_match = _HOST_IN_TEXT.search(cells[1])
+        link_match = _MD_LINK.search(cells[3])
+        requirement = _clean(cells[2])
+        if not host_match or not link_match or not requirement:
+            continue
+        found[host_match.group(1).lower()] = (
+            requirement,
+            link_match.group(1),
+            path.name,
+        )
+    return found
+
+
+def parse_registry(path: Path) -> dict[str, tuple[str, str]]:
+    """Read the cluster reference's property tables.
+
+    Each cluster is a `### N. Name` section followed by a two-column table of
+    Cluster URI / Database(s) / Purpose. Sections without a cluster URI -- the
+    regional SQL section describes a lookup rather than a fixed cluster -- are
+    skipped rather than guessed at.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+
+    found: dict[str, tuple[str, str]] = {}
+    host = database = purpose = ""
+
+    def flush() -> None:
+        nonlocal host, database, purpose
+        if host:
+            found[host] = (database, purpose)
+        host = database = purpose = ""
+
+    for line in text.splitlines():
+        if line.startswith("#"):
+            flush()
+            continue
+        if not line.strip().startswith("|"):
+            continue
+        cells = [c for c in line.split("|")]
+        if len(cells) < 3:
+            continue
+        key, value = _clean(cells[1]).lower(), _clean(cells[2])
+        if key.startswith("cluster uri"):
+            match = _HOST_IN_TEXT.search(value)
+            if match:
+                host = match.group(1).lower()
+        elif key.startswith("database"):
+            # "NetworkMetadata (topology), azdhbackupmds (device health)" ->
+            # the first database, without the gloss.
+            first = value.split(",")[0]
+            database = re.sub(r"\s*\(.*?\)\s*", "", first).strip()
+        elif key.startswith("purpose"):
+            purpose = value
+    flush()
+    return found
+
+
+def _as_snapshot(table: dict[str, tuple[str, str, str]]) -> dict[str, tuple[str, str, str]]:
+    """Label built-in values as what they are.
+
+    An operator acting on an entitlement name deserves to know whether it came
+    from the team's current document or from a copy that may be months stale.
+    """
+    return {
+        host: (requirement, url, source if source.startswith("snapshot") else f"snapshot of {source}")
+        for host, (requirement, url, source) in table.items()
+    }
+
+
+def load_access(repo: Path | None = None) -> dict[str, tuple[str, str, str]]:
+    """Access requirements, preferring the team's document over the snapshot.
+
+    Sentry does not own these facts. An entitlement that has been renamed and
+    is still shown here sends an on-call engineer to an approver who will
+    reject them, so the checkout wins whenever there is one -- and the built-in
+    copy exists only so `--connectors` still says something useful on a machine
+    without the repository.
+    """
+    repo = repo or reference_repo()
+    merged = _as_snapshot(ACCESS)
+    if repo is not None:
+        parsed = parse_access(repo / _ONBOARDING)
+        if parsed:
+            merged.update(parsed)
+    return merged
+
+
+def load_registry(repo: Path | None = None) -> dict[str, tuple[str, str]]:
+    repo = repo or reference_repo()
+    if repo is not None:
+        parsed = parse_registry(repo / _CLUSTER_REFERENCE)
+        if parsed:
+            merged = dict(REGISTRY)
+            for host, (database, purpose) in parsed.items():
+                fallback_db, fallback_purpose = merged.get(host, ("", ""))
+                merged[host] = (database or fallback_db, purpose or fallback_purpose)
+            return merged
+    return dict(REGISTRY)
+
 
 @dataclass
 class Access:
@@ -158,6 +317,15 @@ class Access:
         return bool(self.requirement)
 
     @property
+    def live(self) -> bool:
+        """Read from the team's checkout rather than the built-in snapshot.
+
+        The distinction is worth surfacing: a snapshot value may be months out
+        of date, and the operator should know which they are acting on.
+        """
+        return bool(self.source) and not self.source.startswith("snapshot")
+
+    @property
     def short(self) -> str:
         """A table cell: the group or entitlement name, without the prose."""
         if not self.requirement:
@@ -165,8 +333,8 @@ class Access:
         return self.requirement.split(",")[0].split("(")[0].strip()[:34]
 
 
-def access_for(host: str) -> Access:
-    entry = ACCESS.get(host)
+def access_for(host: str, table: dict[str, tuple[str, str, str]] | None = None) -> Access:
+    entry = (table if table is not None else ACCESS).get(host)
     if entry is None:
         return Access()
     requirement, url, source = entry
@@ -252,6 +420,8 @@ def _sentry_planes(config) -> dict[str, DataPlane]:
 def discover_planes(config, skills) -> list[DataPlane]:
     """Everything Sentry or an installed skill queries, in one list."""
     planes = _sentry_planes(config)
+    registry = load_registry()
+    access_table = load_access()
 
     for skill in skills:
         body = f"{skill.description}\n{skill.body}"
@@ -260,7 +430,7 @@ def discover_planes(config, skills) -> list[DataPlane]:
                 continue
             plane = planes.get(host)
             if plane is None:
-                database, purpose = REGISTRY.get(host, ("", ""))
+                database, purpose = registry.get(host, ("", ""))
                 plane = DataPlane(
                     host=host,
                     database=database,
@@ -273,9 +443,9 @@ def discover_planes(config, skills) -> list[DataPlane]:
             plane.required_by.append(skill.id)
 
     for host, plane in planes.items():
-        if not plane.purpose and host in REGISTRY:
-            plane.database, plane.purpose = REGISTRY[host]
-        plane.access = access_for(host)
+        if not plane.purpose and host in registry:
+            plane.database, plane.purpose = registry[host]
+        plane.access = access_for(host, access_table)
         if plane.redacted:
             plane.status = "redacted"
             plane.detail = "hostname is redacted in the reference; cannot be probed"

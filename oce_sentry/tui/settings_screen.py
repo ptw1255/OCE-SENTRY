@@ -37,6 +37,7 @@ from ..dataplanes import (
     discover_planes,
     plane_summary,
     probe_plane,
+    reference_repo,
 )
 
 
@@ -174,6 +175,7 @@ class SettingsScreen(Screen):
     def _render_summary(self) -> None:
         path = config_path(self._config)
         wired = mcp_enabled()
+        repo = reference_repo()
 
         if not wired:
             headline = (
@@ -190,11 +192,18 @@ class SettingsScreen(Screen):
             if shell_escalation_enabled()
             else "shell denied to skills"
         )
+        # Access requirements are the team's facts, not Sentry's. Say where
+        # this run is reading them from.
+        source = (
+            f"access read from {repo.name}"
+            if repo is not None
+            else "[yellow]access from built-in snapshot - no RCA checkout found[/yellow]"
+        )
 
         self.query_one("#set-summary", Static).update(
             f"{headline}\n"
             f"config     {path or 'none found'}\n"
-            f"policy     {self._config.policy.label}     {shell}"
+            f"policy     {self._config.policy.label}     {shell}     {source}"
         )
 
     # --------------------------------------------------------------- probing
@@ -364,10 +373,16 @@ class SettingsScreen(Screen):
         # useless information without the name of the thing to go and request.
         lines += ["", "[b]ACCESS YOU NEED[/b]"]
         if plane.access.documented:
+            provenance = (
+                f"documented in {plane.access.source}"
+                if plane.access.live
+                else f"[yellow]from a built-in {plane.access.source}[/yellow] "
+                f"[dim]- may be out of date[/dim]"
+            )
             lines += [
                 f"  {_escape(plane.access.requirement)}",
                 f"  [dim]request:[/dim] {_escape(plane.access.request_url)}",
-                f"  [dim]documented in {_escape(plane.access.source)}[/dim]",
+                f"  [dim]{_escape(provenance) if plane.access.live else provenance}[/dim]",
             ]
         else:
             lines += [

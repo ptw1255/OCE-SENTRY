@@ -10,9 +10,14 @@ from oce_sentry.dataplanes import (
     ACCESS,
     BASELINE_ACCESS,
     REGISTRY,
+    Access,
     DataPlane,
     access_for,
     discover_planes,
+    load_access,
+    load_registry,
+    parse_access,
+    parse_registry,
     plane_summary,
 )
 from oce_sentry.skills import Skill
@@ -202,6 +207,121 @@ def test_both_spo_clusters_point_at_the_same_request():
 
 def test_the_baseline_names_az_login():
     assert "az login" in BASELINE_ACCESS
+
+
+# ------------------------------------------------------- reading the team's docs
+
+
+_ONBOARDING_TABLE = """
+## Required Access
+
+| Resource | Access required | Request |
+|---|---|---|
+| `https://azphynet.kusto.windows.net/` | IDWeb group `AznwKustoReader` | [Request access](https://idweb.example/aznw) |
+| `https://icmcluster.kusto.windows.net/` | `IcM-Kusto-Access` entitlement | [Request access](https://coreidentity.example/icm) |
+| Some unrelated row | no host here | [link](https://example.com) |
+"""
+
+_CLUSTER_DOC = """
+### 1. ICM Cluster
+
+| Property | Value |
+|----------|-------|
+| **Cluster URI** | `https://icmcluster.kusto.windows.net/` |
+| **Database** | `IcmDataWarehouse` |
+| **Purpose** | Incident details, component health |
+
+### 4. azphynet Cluster
+
+| Property | Value |
+|----------|-------|
+| **Cluster URI** | `https://azphynet.kusto.windows.net/` |
+| **Databases** | `NetworkMetadata` (topology), `azdhbackupmds` (device health) |
+| **Purpose** | Physical network device topology |
+
+### 5. Regional, resolved at runtime
+
+| Property | Value |
+|----------|-------|
+| **Database** | `SQLAzure1` |
+| **Purpose** | Azure SQL platform telemetry |
+"""
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    (tmp_path / "ONBOARDING.md").write_text(_ONBOARDING_TABLE, encoding="utf-8")
+    reference = tmp_path / ".github" / "references"
+    reference.mkdir(parents=True)
+    (reference / "MCP_Servers_Kusto_Cluster_References.md").write_text(
+        _CLUSTER_DOC, encoding="utf-8"
+    )
+    return tmp_path
+
+
+def test_access_is_read_from_the_onboarding_guide(repo):
+    parsed = parse_access(repo / "ONBOARDING.md")
+    assert parsed["icmcluster.kusto.windows.net"][0] == "IcM-Kusto-Access entitlement"
+    assert parsed["icmcluster.kusto.windows.net"][1] == "https://coreidentity.example/icm"
+
+
+def test_rows_without_a_cluster_host_are_skipped(repo):
+    parsed = parse_access(repo / "ONBOARDING.md")
+    assert len(parsed) == 2
+
+
+def test_the_document_wins_over_the_snapshot(repo):
+    """Sentry does not own these facts; a renamed entitlement must not persist."""
+    live = load_access(repo)
+    assert live["icmcluster.kusto.windows.net"][1] == "https://coreidentity.example/icm"
+    assert live["icmcluster.kusto.windows.net"][2] == "ONBOARDING.md"
+
+
+def test_snapshot_entries_are_labelled_as_snapshots(repo):
+    """The SLI cluster is not in the onboarding table, so it stays built-in."""
+    live = load_access(repo)
+    _, _, source = live["genevaslidatafollower.westcentralus.kusto.windows.net"]
+    assert source.startswith("snapshot")
+    assert not Access(source=source).live
+    assert Access(source="ONBOARDING.md").live
+
+
+def test_registry_is_read_from_the_cluster_reference(repo):
+    parsed = parse_registry(repo / ".github" / "references" / "MCP_Servers_Kusto_Cluster_References.md")
+    assert parsed["icmcluster.kusto.windows.net"] == (
+        "IcmDataWarehouse",
+        "Incident details, component health",
+    )
+
+
+def test_multi_database_rows_take_the_first_without_its_gloss(repo):
+    parsed = parse_registry(repo / ".github" / "references" / "MCP_Servers_Kusto_Cluster_References.md")
+    assert parsed["azphynet.kusto.windows.net"][0] == "NetworkMetadata"
+
+
+def test_sections_without_a_cluster_uri_are_skipped(repo):
+    """The regional SQL section describes a lookup, not a fixed cluster."""
+    parsed = parse_registry(repo / ".github" / "references" / "MCP_Servers_Kusto_Cluster_References.md")
+    assert len(parsed) == 2
+
+
+def test_a_missing_checkout_falls_back_to_the_snapshot(tmp_path):
+    """`--connectors` must still say something useful without the repo."""
+    live = load_access(tmp_path)
+    assert live["icmcluster.kusto.windows.net"][0] == "IcM-Kusto-Access entitlement"
+    assert live["icmcluster.kusto.windows.net"][2].startswith("snapshot")
+    assert load_registry(tmp_path)["icmcluster.kusto.windows.net"][0] == "IcmDataWarehouse"
+
+
+def test_a_malformed_document_falls_back_rather_than_emptying(tmp_path):
+    (tmp_path / "ONBOARDING.md").write_text("no tables here", encoding="utf-8")
+    assert load_access(tmp_path) == _snapshot_labelled()
+
+
+def _snapshot_labelled() -> dict:
+    from oce_sentry.dataplanes import _as_snapshot
+
+    return _as_snapshot(ACCESS)
 
 
 # ---------------------------------------------------------------- consequence
