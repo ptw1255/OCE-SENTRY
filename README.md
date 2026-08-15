@@ -213,6 +213,27 @@ Two distinctions the screen exists to make, because both were invisible before:
 
 The **NEEDED BY** column answers "if this is down, what stops working". Skills declare prerequisites in prose rather than front matter, so it is read from the skill body and labelled as indicative rather than a contract.
 
+### The clusters behind them
+
+`v` switches Settings to the **Kusto data planes** — because one MCP row called `azure` meaning "Kusto queries" is true and nearly useless. Behind it sit fourteen distinct clusters with different owners and different access, and an operator whose skill just failed needs to know *which* one it could not reach.
+
+```
+CLUSTER                                        DATABASE          STATUS    USED BY  SKILLS
+icmcluster.kusto.windows.net                   IcmDataWarehouse  ready     both     19
+genevaslidatafollower.westcentralus…           slidata           ready     sentry   -
+spogdskustocluster.eastus2.kusto.windows.net   spoprod           declared  skills   7
+fcmdataro.kusto.windows.net                    FCMKustoStore     ready     skills   5
+icmclustereu-redacted.westeurope…              IcMDataWarehouse  redacted  skills   2
+```
+
+**USED BY** is the distinction that matters. `sentry` means the console queries it directly, not through MCP — if that is denied the queue or the SLI view is broken, not just a skill. `skills` means it is reached through the `azure` MCP server, and losing it degrades a skill to summarising the evidence pack, quietly.
+
+`p` probes each one with `print ProbeOk=1`, evaluated in the database's context so a success proves network, token and database authorisation together. It reads nothing: this must never become a way to sample production data.
+
+Clusters the RCA reference redacts are listed and marked `redacted` rather than probed — a DNS failure on a placeholder hostname says nothing about your access. A cluster a skill names that the reference does not know is listed as *"Not in the reference"*, which is the signal that a new data source arrived.
+
+Purposes are transcribed from the RCA agent's own [`MCP_Servers_Kusto_Cluster_References.md`](https://onedrive.visualstudio.com/SPARC/_git/SRELivesite-RCAAgent), so they are the team's words rather than a guess.
+
 Connectors are **off by default**. Without them a skill can only summarise the evidence pack — which is exactly what live runs reported before this existed. Turning them on lets skills query production telemetry during a run:
 
 ```powershell

@@ -362,6 +362,21 @@ def render_connectors(config: Config) -> int:
         print()
         print("Skills cannot reach live data until connectors are wired in.")
         print("Without them a skill can only summarise the evidence pack.")
+
+    from .dataplanes import discover_planes
+
+    planes = discover_planes(config, skills)
+    print()
+    print(f"kusto clusters behind these connectors: {len(planes)}")
+    print()
+    header = f"{'CLUSTER':<50} {'DATABASE':<16} {'USED BY':<9} {'SKILLS':<7} PURPOSE"
+    print(header)
+    print("-" * len(header))
+    for plane in planes:
+        print(
+            f"{plane.host[:50]:<50} {(plane.database or '-')[:16]:<16} "
+            f"{plane.used_by:<9} {len(plane.required_by) or '-':<7} {plane.purpose[:40]}"
+        )
     return 0
 
 

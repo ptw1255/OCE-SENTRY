@@ -31,12 +31,15 @@ from ..connectors import (
     status_summary,
 )
 from ..copilot import shell_escalation_enabled
+from ..dataplanes import DataPlane, discover_planes, plane_summary, probe_plane
 
 
 class SettingsScreen(Screen):
     BINDINGS = [
         Binding("escape,q", "close", "Back"),
         Binding("r", "refresh", "Re-probe"),
+        Binding("p", "probe_planes", "Probe clusters"),
+        Binding("v", "toggle_view", "Servers / clusters"),
         Binding("o", "open_source", "Open config"),
         Binding("c", "copy_hint", "How to change"),
     ]
@@ -46,6 +49,8 @@ class SettingsScreen(Screen):
         self._config = config
         self._tokens = tokens
         self._connectors: list[Connector] = []
+        self._planes: list[DataPlane] = []
+        self._view = "servers"
         self._probing = False
 
     def compose(self) -> ComposeResult:
@@ -60,11 +65,97 @@ class SettingsScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#set-table", DataTable).add_columns(
-            "CONNECTOR", "STATUS", "KIND", "PURPOSE", "NEEDED BY"
-        )
+        self._build_columns()
         self._render_summary()
+        self._load_planes()
         self.action_refresh()
+
+    def _build_columns(self) -> None:
+        table = self.query_one("#set-table", DataTable)
+        table.clear(columns=True)
+        if self._view == "servers":
+            table.add_columns("CONNECTOR", "STATUS", "KIND", "PURPOSE", "NEEDED BY")
+        else:
+            table.add_columns("CLUSTER", "DATABASE", "STATUS", "USED BY", "PURPOSE", "SKILLS")
+
+    def action_toggle_view(self) -> None:
+        """MCP servers and Kusto clusters are different questions.
+
+        One table with a mixed meaning of "status" would answer neither: a
+        server is ready when its command exists, a cluster when it accepts a
+        query as this operator.
+        """
+        self._view = "clusters" if self._view == "servers" else "servers"
+        self._build_columns()
+        if self._view == "servers":
+            self._show(self._connectors)
+        else:
+            self._show_planes()
+
+    def _load_planes(self) -> None:
+        from ..skills import discover_skills
+
+        skills = [s for s in discover_skills(self._config) if s.ok]
+        self._planes = discover_planes(self._config, skills)
+
+    def _show_planes(self) -> None:
+        if self._view != "clusters":
+            return
+        table = self.query_one("#set-table", DataTable)
+        row = table.cursor_row
+        table.clear()
+        for plane in self._planes:
+            table.add_row(
+                plane.host[:44],
+                (plane.database or "-")[:16],
+                _plane_status(plane),
+                plane.used_by,
+                (plane.purpose or "")[:40],
+                str(len(plane.required_by) or "-"),
+            )
+        if row is not None and 0 <= row < len(self._planes):
+            table.move_cursor(row=row)
+        self._render_detail()
+
+    def action_probe_planes(self) -> None:
+        """Ask each cluster a trivial question, as this operator.
+
+        On demand rather than on open: each cluster needs its own token, so
+        probing a dozen is slow enough that doing it automatically would make
+        Settings feel broken.
+        """
+        if self._view != "clusters":
+            self._view = "clusters"
+            self._build_columns()
+            self._show_planes()
+        if self._probing:
+            return
+        self._probing = True
+        self._log("[b]probing clusters[/b] [dim]print ProbeOk=1, reads nothing[/dim]")
+        self._set_status("probing clusters ...")
+        self._probe_planes()
+
+    @work(thread=True, group="planes")
+    def _probe_planes(self) -> None:
+        try:
+            for plane in self._planes:
+                probe_plane(plane, self._tokens)
+                self.app.call_from_thread(self._show_planes)
+        except Exception as exc:  # noqa: BLE001 - surfaced verbatim
+            self.app.call_from_thread(self._log, f"[red]cluster probe failed: {exc}[/red]")
+        finally:
+            self.app.call_from_thread(self._done_planes)
+
+    def _done_planes(self) -> None:
+        self._probing = False
+        self._set_status(plane_summary(self._planes))
+        denied = [p for p in self._planes if p.status == "denied"]
+        if denied:
+            self._log(
+                f"[yellow]{len(denied)} cluster(s) refused this identity: "
+                f"{', '.join(p.host.split('.')[0] for p in denied)}[/yellow]"
+            )
+            self._log("[dim]Skills needing them will fall back to the evidence pack.[/dim]")
 
     # --------------------------------------------------------------- summary
 
@@ -125,11 +216,14 @@ class SettingsScreen(Screen):
         self._probing = False
         self._set_status(
             f"{status_summary(self._connectors)} - "
+            f"{len(self._planes)} kusto cluster(s), press v - "
             f"{'wired into skill runs' if mcp_enabled() else 'not wired (see c)'}"
         )
 
     def _show(self, connectors: list[Connector]) -> None:
         self._connectors = connectors
+        if self._view != "servers":
+            return
         table = self.query_one("#set-table", DataTable)
         row = table.cursor_row
         table.clear()
@@ -148,16 +242,30 @@ class SettingsScreen(Screen):
     # ---------------------------------------------------------------- detail
 
     def _current(self) -> Connector | None:
+        if self._view != "servers":
+            return None
         table = self.query_one("#set-table", DataTable)
         row = table.cursor_row
         if not self._connectors or row is None or row < 0 or row >= len(self._connectors):
             return None
         return self._connectors[row]
 
+    def _current_plane(self) -> DataPlane | None:
+        if self._view != "clusters":
+            return None
+        table = self.query_one("#set-table", DataTable)
+        row = table.cursor_row
+        if not self._planes or row is None or row < 0 or row >= len(self._planes):
+            return None
+        return self._planes[row]
+
     def on_data_table_row_highlighted(self) -> None:
         self._render_detail()
 
     def _render_detail(self) -> None:
+        if self._view == "clusters":
+            self._render_plane_detail()
+            return
         info = self.query_one("#set-info", Static)
         connector = self._current()
         if connector is None:
@@ -199,6 +307,54 @@ class SettingsScreen(Screen):
         info.update("\n".join(lines))
 
     # ----------------------------------------------------------------- hints
+
+    def _render_plane_detail(self) -> None:
+        info = self.query_one("#set-info", Static)
+        plane = self._current_plane()
+        if plane is None:
+            info.update("No cluster selected.")
+            return
+
+        lines = [f"[b]{_escape(plane.host)}[/b]", ""]
+        if plane.purpose:
+            lines += [_escape(plane.purpose), ""]
+        lines += [
+            f"database   {_escape(plane.database or 'not recorded')}",
+            f"status     {_plane_status(plane)}",
+            f"used by    {plane.used_by}",
+        ]
+        if plane.detail:
+            lines.append(f"detail     {_escape(plane.detail)}")
+
+        if plane.used_by in ("sentry", "both"):
+            lines += [
+                "",
+                "[b]Sentry queries this directly[/b]",
+                "[dim]Not through MCP. If this is denied the console itself[/dim]",
+                "[dim]cannot show its queue or SLIs.[/dim]",
+            ]
+
+        if plane.required_by:
+            named = ", ".join(sorted(plane.required_by)[:8])
+            more = len(plane.required_by) - 8
+            if more > 0:
+                named += f", +{more} more"
+            lines += [
+                "",
+                f"[b]Named by {len(plane.required_by)} skill(s)[/b]",
+                f"[dim]{_escape(named)}[/dim]",
+            ]
+
+        if plane.redacted:
+            lines += [
+                "",
+                "[yellow]The reference redacts this hostname, so it cannot be[/yellow]",
+                "[yellow]probed. It is listed because a skill depends on it.[/yellow]",
+            ]
+        elif plane.status == "declared":
+            lines += ["", "[dim]Not probed. Press p to test access.[/dim]"]
+
+        info.update("\n".join(lines))
 
     def action_copy_hint(self) -> None:
         """Show how to change a setting rather than changing it.
@@ -244,6 +400,18 @@ class SettingsScreen(Screen):
 
     def _set_status(self, message: str) -> None:
         self.query_one("#set-status", Static).update(message)
+
+
+def _plane_status(plane: DataPlane) -> str:
+    if plane.status == "ready":
+        return "[green]ready[/green]"
+    if plane.status == "denied":
+        return "[red]denied[/red]"
+    if plane.status == "unreachable":
+        return "[red]unreachable[/red]"
+    if plane.status == "redacted":
+        return "[dim]redacted[/dim]"
+    return "[dim]declared[/dim]"
 
 
 def _status_cell(connector: Connector) -> str:
