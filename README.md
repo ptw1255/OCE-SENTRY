@@ -218,15 +218,19 @@ The **NEEDED BY** column answers "if this is down, what stops working". Skills d
 `v` switches Settings to the **Kusto data planes** — because one MCP row called `azure` meaning "Kusto queries" is true and nearly useless. Behind it sit fourteen distinct clusters with different owners and different access, and an operator whose skill just failed needs to know *which* one it could not reach.
 
 ```
-CLUSTER                                        DATABASE          STATUS    USED BY  SKILLS
-icmcluster.kusto.windows.net                   IcmDataWarehouse  ready     both     19
-genevaslidatafollower.westcentralus…           slidata           ready     sentry   -
-spogdskustocluster.eastus2.kusto.windows.net   spoprod           declared  skills   7
-fcmdataro.kusto.windows.net                    FCMKustoStore     ready     skills   5
-icmclustereu-redacted.westeurope…              IcMDataWarehouse  redacted  skills   2
+CLUSTER                                        DATABASE          STATUS    USED BY  ACCESS NEEDED
+icmcluster.kusto.windows.net                   IcmDataWarehouse  ready     both     IcM-Kusto-Access entitlement
+genevaslidatafollower.westcentralus…           slidata           ready     sentry   Geneva read access
+spogdskustocluster.eastus2.kusto.windows.net   spoprod           declared  skills   Corp-ODSP-ReadAccess_User
+fcmdataro.kusto.windows.net                    FCMKustoStore     ready     skills   IDWeb group fcmusers
+azphynet.kusto.windows.net                     NetworkMetadata   declared  skills   IDWeb group AznwKustoReader
 ```
 
-**USED BY** is the distinction that matters. `sentry` means the console queries it directly, not through MCP — if that is denied the queue or the SLI view is broken, not just a skill. `skills` means it is reached through the `azure` MCP server, and losing it degrades a skill to summarising the evidence pack, quietly.
+**ACCESS NEEDED** is the column that makes this actionable. A cluster that says `denied` is useless information without the name of the thing to go and request, so each row carries the entitlement or IDWeb group, and the detail pane carries the one-click request link. These are transcribed from the RCA agent's `ONBOARDING.md` and the livesite-management-hygiene preflight — the two places ODSP documents it. **Nothing is inferred:** six clusters have no documented access path and say exactly that, because guessing an entitlement name sends an on-call engineer to the wrong approver.
+
+Every row also states **WITHOUT IT** — what you actually lose. That differs by row: losing `icmcluster` means the queue cannot load, while losing `spogdskustocluster` means seven skills quietly fall back to the evidence pack.
+
+**USED BY** is the other distinction that matters. `sentry` means the console queries it directly, not through MCP — if that is denied the queue or the SLI view is broken, not just a skill. `skills` means it is reached through the `azure` MCP server.
 
 `p` probes each one with `print ProbeOk=1`, evaluated in the database's context so a success proves network, token and database authorisation together. It reads nothing: this must never become a way to sample production data.
 

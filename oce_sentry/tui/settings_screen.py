@@ -17,9 +17,9 @@ import webbrowser
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, RichLog, Static
+from textual.widgets import DataTable, Footer, Header, Static
 
 from ..connectors import (
     Connector,
@@ -31,7 +31,13 @@ from ..connectors import (
     status_summary,
 )
 from ..copilot import shell_escalation_enabled
-from ..dataplanes import DataPlane, discover_planes, plane_summary, probe_plane
+from ..dataplanes import (
+    BASELINE_ACCESS,
+    DataPlane,
+    discover_planes,
+    plane_summary,
+    probe_plane,
+)
 
 
 class SettingsScreen(Screen):
@@ -52,15 +58,20 @@ class SettingsScreen(Screen):
         self._planes: list[DataPlane] = []
         self._view = "servers"
         self._probing = False
+        self._notice = ""
+        self._show_hints = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Vertical(id="set-body"):
             yield Static("", id="set-summary")
             yield DataTable(id="set-table", cursor_type="row", zebra_stripes=True)
-            with Horizontal(id="set-detail"):
+            # One full-width pane rather than a split. The right half used to
+            # be a log that was empty most of the time, which cost half the
+            # width of the only part of this screen carrying real detail --
+            # and access requirements do not fit in sixty columns.
+            with VerticalScroll(id="set-detail"):
                 yield Static("", id="set-info")
-                yield RichLog(id="set-log", wrap=True, markup=True, highlight=False)
         yield Static("", id="set-status")
         yield Footer()
 
@@ -76,7 +87,7 @@ class SettingsScreen(Screen):
         if self._view == "servers":
             table.add_columns("CONNECTOR", "STATUS", "KIND", "PURPOSE", "NEEDED BY")
         else:
-            table.add_columns("CLUSTER", "DATABASE", "STATUS", "USED BY", "PURPOSE", "SKILLS")
+            table.add_columns("CLUSTER", "DATABASE", "STATUS", "USED BY", "ACCESS NEEDED", "SKILLS")
 
     def action_toggle_view(self) -> None:
         """MCP servers and Kusto clusters are different questions.
@@ -105,12 +116,13 @@ class SettingsScreen(Screen):
         row = table.cursor_row
         table.clear()
         for plane in self._planes:
+            access = plane.access.short
             table.add_row(
                 plane.host[:44],
                 (plane.database or "-")[:16],
                 _plane_status(plane),
                 plane.used_by,
-                (plane.purpose or "")[:40],
+                access if plane.access.documented else f"[dim]{access}[/dim]",
                 str(len(plane.required_by) or "-"),
             )
         if row is not None and 0 <= row < len(self._planes):
@@ -272,28 +284,43 @@ class SettingsScreen(Screen):
             info.update("No connector selected.")
             return
 
-        lines = [f"[b]{_escape(connector.name)}[/b]", ""]
+        lines = [f"[b]{_escape(connector.name)}[/b]"]
         if connector.purpose:
-            lines += [_escape(connector.purpose), ""]
+            lines.append(_escape(connector.purpose))
         lines += [
-            f"status     {_status_cell(connector)}",
+            "",
+            f"status     {_status_cell(connector)}"
+            + (f"   [dim]{_escape(connector.detail)}[/dim]" if connector.detail else ""),
             f"kind       {connector.kind}",
-            f"detail     {_escape(connector.detail or '-')}",
             "",
             "[dim]starts with[/dim]",
-            f"  {_escape(connector.target[:120])}",
+            f"  {_escape(connector.target[:150])}",
         ]
 
+        # A server being on PATH is not access. The clusters behind it are
+        # where an operator is actually refused, so the access requirement is
+        # shown here too rather than only under v.
+        planes = [p for p in self._planes if _serves(connector, p)]
+        if planes:
+            lines += ["", f"[b]ACCESS YOU NEED[/b]  [dim]({len(planes)} cluster(s))[/dim]"]
+            for plane in planes[:8]:
+                requirement = (
+                    plane.access.requirement
+                    if plane.access.documented
+                    else "not documented - ask the owning team"
+                )
+                lines.append(f"  {_escape(plane.host.split('.')[0]):<26} {_escape(requirement)}")
+            if len(planes) > 8:
+                lines.append(f"  [dim]+{len(planes) - 8} more, press v[/dim]")
+            lines.append(f"  [dim]{_escape(BASELINE_ACCESS)}[/dim]")
+
         if connector.required_by:
-            named = ", ".join(sorted(connector.required_by)[:8])
-            more = len(connector.required_by) - 8
-            if more > 0:
-                named += f", +{more} more"
+            named = ", ".join(sorted(connector.required_by))
             lines += [
                 "",
-                f"[b]Named by {len(connector.required_by)} skill(s)[/b]",
-                f"[dim]{_escape(named)}[/dim]",
-                "[dim]Read from skill prose, so this is indicative, not a contract.[/dim]",
+                f"[b]NEEDED BY {len(connector.required_by)} SKILL(S)[/b]",
+                f"  [dim]{_escape(named)}[/dim]",
+                "  [dim]Read from skill prose, so indicative rather than a contract.[/dim]",
             ]
         else:
             lines += ["", "[dim]No installed skill names this connector.[/dim]"]
@@ -301,9 +328,11 @@ class SettingsScreen(Screen):
         if not mcp_enabled():
             lines += [
                 "",
-                "[yellow]Not passed to skill runs. Press c for how to enable.[/yellow]",
+                "[yellow]Not passed to skill runs, so nothing here is reachable[/yellow]",
+                "[yellow]by a skill yet.[/yellow]",
             ]
 
+        lines += self._hint_lines()
         info.update("\n".join(lines))
 
     # ----------------------------------------------------------------- hints
@@ -315,73 +344,98 @@ class SettingsScreen(Screen):
             info.update("No cluster selected.")
             return
 
-        lines = [f"[b]{_escape(plane.host)}[/b]", ""]
+        lines = [f"[b]{_escape(plane.host)}[/b]"]
         if plane.purpose:
-            lines += [_escape(plane.purpose), ""]
+            lines.append(_escape(plane.purpose))
         lines += [
+            "",
             f"database   {_escape(plane.database or 'not recorded')}",
-            f"status     {_plane_status(plane)}",
-            f"used by    {plane.used_by}",
+            f"status     {_plane_status(plane)}"
+            + (f"   [dim]{_escape(plane.detail)}[/dim]" if plane.detail else ""),
+            f"used by    {plane.used_by}"
+            + (
+                "   [dim]this console queries it directly, not through MCP[/dim]"
+                if plane.used_by in ("sentry", "both")
+                else ""
+            ),
         ]
-        if plane.detail:
-            lines.append(f"detail     {_escape(plane.detail)}")
 
-        if plane.used_by in ("sentry", "both"):
+        # The access block is the point of this screen: a denied cluster is
+        # useless information without the name of the thing to go and request.
+        lines += ["", "[b]ACCESS YOU NEED[/b]"]
+        if plane.access.documented:
             lines += [
-                "",
-                "[b]Sentry queries this directly[/b]",
-                "[dim]Not through MCP. If this is denied the console itself[/dim]",
-                "[dim]cannot show its queue or SLIs.[/dim]",
+                f"  {_escape(plane.access.requirement)}",
+                f"  [dim]request:[/dim] {_escape(plane.access.request_url)}",
+                f"  [dim]documented in {_escape(plane.access.source)}[/dim]",
             ]
+        else:
+            lines += [
+                "  [dim]Not documented in the ODSP onboarding guide.[/dim]",
+                "  [dim]Ask the owning team rather than guessing an entitlement;[/dim]",
+                "  [dim]the wrong request goes to the wrong approver.[/dim]",
+            ]
+        lines.append(f"  [dim]{_escape(BASELINE_ACCESS)}[/dim]")
+
+        lines += ["", "[b]WITHOUT IT[/b]", f"  {_escape(plane.consequence)}"]
 
         if plane.required_by:
-            named = ", ".join(sorted(plane.required_by)[:8])
-            more = len(plane.required_by) - 8
-            if more > 0:
-                named += f", +{more} more"
+            named = ", ".join(sorted(plane.required_by))
             lines += [
                 "",
-                f"[b]Named by {len(plane.required_by)} skill(s)[/b]",
-                f"[dim]{_escape(named)}[/dim]",
+                f"[b]NEEDED BY {len(plane.required_by)} SKILL(S)[/b]",
+                f"  [dim]{_escape(named)}[/dim]",
             ]
 
         if plane.redacted:
             lines += [
                 "",
-                "[yellow]The reference redacts this hostname, so it cannot be[/yellow]",
-                "[yellow]probed. It is listed because a skill depends on it.[/yellow]",
+                "[yellow]The reference redacts this hostname, so it cannot be probed.[/yellow]",
+                "[yellow]It is listed because a skill depends on it.[/yellow]",
             ]
         elif plane.status == "declared":
-            lines += ["", "[dim]Not probed. Press p to test access.[/dim]"]
+            lines += ["", "[dim]Not probed. Press p to test access from here.[/dim]"]
+        elif plane.status == "denied":
+            lines += [
+                "",
+                "[red]This cluster refused your identity. Request the access above,[/red]",
+                "[red]then re-run az login so the new group is in your token.[/red]",
+            ]
 
+        lines += self._hint_lines()
         info.update("\n".join(lines))
+
+    def _hint_lines(self) -> list[str]:
+        if not self._show_hints:
+            return ["", "[dim]Press c for how to change these settings.[/dim]"]
+        path = config_path(self._config) or "<path to .mcp.json>"
+        return [
+            "",
+            "[b]HOW TO CHANGE THESE SETTINGS[/b]",
+            "  [dim]Set before launching oce-sentry. A User-scope variable does[/dim]",
+            "  [dim]not reach an already-running shell.[/dim]",
+            "",
+            "  Wire connectors into skill runs",
+            "    $env:OCE_SENTRY_ENABLE_MCP = '1'",
+            f"    [dim]uses {_escape(str(path))}[/dim]",
+            "    [yellow]costs more: every server's tool definitions enter the prompt,[/yellow]",
+            "    [yellow]so a measured run went 28.4 credits to 107 on 536k tokens.[/yellow]",
+            "",
+            "  Point at a different MCP config",
+            "    $env:OCE_SENTRY_MCP_CONFIG = 'C:\\path\\to\\.mcp.json'",
+            "",
+            "  Allow skills that ask for shell [red](rarely wanted)[/red]",
+            "    $env:OCE_SENTRY_ALLOW_SKILL_SHELL = '1'",
+        ]
 
     def action_copy_hint(self) -> None:
         """Show how to change a setting rather than changing it.
 
         A console that runs production actions should not also rewrite its own
-        permissions from a keypress; and on Windows a User-scope variable does
-        not reach processes whose parent predates it, so the restart note is
-        part of the instruction rather than a footnote.
+        permissions from a keypress.
         """
-        path = config_path(self._config) or "<path to .mcp.json>"
-        self._log("")
-        self._log("[b]Wire connectors into skill runs[/b]")
-        self._log("  [dim]lets skills query production telemetry during a run[/dim]")
-        self._log("  $env:OCE_SENTRY_ENABLE_MCP = '1'")
-        self._log(f"  [dim]uses {path}[/dim]")
-        self._log("  [yellow]costs more: every server's tool definitions enter the[/yellow]")
-        self._log("  [yellow]prompt, so a measured run went 55s/~0 credits to[/yellow]")
-        self._log("  [yellow]87s/107 credits on 536k tokens.[/yellow]")
-        self._log("")
-        self._log("[b]Point at a different MCP config[/b]")
-        self._log("  $env:OCE_SENTRY_MCP_CONFIG = 'C:\\path\\to\\.mcp.json'")
-        self._log("")
-        self._log("[b]Allow skills that ask for shell[/b] [red](rarely wanted)[/red]")
-        self._log("  $env:OCE_SENTRY_ALLOW_SKILL_SHELL = '1'")
-        self._log("")
-        self._log("[dim]Set these before launching oce-sentry. A User-scope[/dim]")
-        self._log("[dim]variable does not reach an already-running shell.[/dim]")
+        self._show_hints = not self._show_hints
+        self._render_detail()
 
     def action_open_source(self) -> None:
         path = config_path(self._config)
@@ -393,13 +447,31 @@ class SettingsScreen(Screen):
     # ---------------------------------------------------------------- chrome
 
     def _log(self, message: str) -> None:
-        self.query_one("#set-log", RichLog).write(message)
+        """Transient messages go to the status line.
+
+        There is no log pane any more: it was empty most of the time and cost
+        half the width of the detail that operators actually came for.
+        """
+        self._notice = message
+        self._set_status(message)
 
     def action_close(self) -> None:
         self.dismiss()
 
     def _set_status(self, message: str) -> None:
         self.query_one("#set-status", Static).update(message)
+
+
+def _serves(connector: Connector, plane: DataPlane) -> bool:
+    """Whether this MCP server is how a skill reaches this cluster.
+
+    Only `azure` brokers Kusto -- the RCA reference is explicit that even the
+    EU IcM clusters go through it per-call rather than through a separate
+    server. Sentry's own planes are excluded because it queries them directly.
+    """
+    if connector.name != "azure":
+        return False
+    return plane.used_by in ("skills", "both")
 
 
 def _plane_status(plane: DataPlane) -> str:

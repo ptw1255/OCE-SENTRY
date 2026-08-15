@@ -89,8 +89,90 @@ REGISTRY: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: Hosts that are a region suffix rather than a cluster, picked up by a bare
-#: hostname match in prose. Listing them as clusters would be wrong.
+#: cluster host -> what an operator must hold to query it, and where to ask.
+#:
+#: Transcribed from the RCA agent's ONBOARDING.md "Required Access" table and
+#: the livesite-management-hygiene preflight reference. These are the two
+#: places ODSP documents this, and inventing an entitlement name would send an
+#: on-call engineer to the wrong approval page -- so a cluster with nothing
+#: documented says exactly that instead of guessing.
+ACCESS: dict[str, tuple[str, str, str]] = {
+    "icmcluster.kusto.windows.net": (
+        "IcM-Kusto-Access entitlement",
+        "https://coreidentity.microsoft.com/manage/Entitlement/entitlement/icmkustoacce-ufk0",
+        "ONBOARDING.md",
+    ),
+    "icmclustereu-redacted.westeurope.kusto.windows.net": (
+        "IcM-Kusto-Access entitlement, plus EU access from the owning team",
+        "https://coreidentity.microsoft.com/manage/Entitlement/entitlement/icmkustoacce-ufk0",
+        "ONBOARDING.md + scrub-cri2lsi",
+    ),
+    "icmcluster-eu-redacted.westeurope.kusto.windows.net": (
+        "IcM-Kusto-Access entitlement, plus EU access from the owning team",
+        "https://coreidentity.microsoft.com/manage/Entitlement/entitlement/icmkustoacce-ufk0",
+        "ONBOARDING.md + scrub-cri2lsi",
+    ),
+    "spogdskustocluster.eastus2.kusto.windows.net": (
+        "Corp-ODSP-ReadAccess_User (M365 Pulse)",
+        "https://m365pulse.microsoft.com/v2/CorpIdentity/RequestAccess/RequestScenario"
+        "?scenarioName=Corp-ODSP-ReadAccess_User",
+        "ONBOARDING.md",
+    ),
+    "spoemeakustocluster.northeurope.kusto.windows.net": (
+        "Corp-ODSP-ReadAccess_User (the same request covers both SPO clusters)",
+        "https://m365pulse.microsoft.com/v2/CorpIdentity/RequestAccess/RequestScenario"
+        "?scenarioName=Corp-ODSP-ReadAccess_User",
+        "ONBOARDING.md",
+    ),
+    "fcmdataro.kusto.windows.net": (
+        "IDWeb group fcmusers",
+        "https://idweb.microsoft.com/IdentityManagement/aspx/common/GlobalSearchResult.aspx"
+        "?searchtype=e0c132db-08d8-4258-8bce-561687a8a51e&content=fcmusers",
+        "ONBOARDING.md",
+    ),
+    "azphynet.kusto.windows.net": (
+        "IDWeb group AznwKustoReader",
+        "https://idweb.microsoft.com/IdentityManagement/aspx/common/GlobalSearchResult.aspx"
+        "?searchtype=e0c132db-08d8-4258-8bce-561687a8a51e&content=AznwKustoReader",
+        "ONBOARDING.md",
+    ),
+    "genevaslidatafollower.westcentralus.kusto.windows.net": (
+        "Geneva read access; monitor writes additionally need MonitorEditor",
+        "https://eng.ms/docs/products/geneva/alerts/howdoi/viewmonitorconfigsnapshothistory",
+        "livesite-management-hygiene preflight",
+    ),
+}
+
+#: Everything needs this first, whatever else it needs.
+BASELINE_ACCESS = "az login (Azure CLI) - every cluster authenticates through it"
+
+
+@dataclass
+class Access:
+    requirement: str = ""
+    request_url: str = ""
+    source: str = ""
+
+    @property
+    def documented(self) -> bool:
+        return bool(self.requirement)
+
+    @property
+    def short(self) -> str:
+        """A table cell: the group or entitlement name, without the prose."""
+        if not self.requirement:
+            return "-"
+        return self.requirement.split(",")[0].split("(")[0].strip()[:34]
+
+
+def access_for(host: str) -> Access:
+    entry = ACCESS.get(host)
+    if entry is None:
+        return Access()
+    requirement, url, source = entry
+    return Access(requirement=requirement, request_url=url, source=source)
+
+
 _NOT_CLUSTERS = re.compile(
     r"^(eastus2|northeurope|westeurope|westus2|westcentralus)\.kusto\.windows\.net$",
     re.I,
@@ -111,6 +193,7 @@ class DataPlane:
     detail: str = ""
     #: Skills naming this cluster.
     required_by: list[str] = field(default_factory=list)
+    access: Access = field(default_factory=Access)
 
     @property
     def url(self) -> str:
@@ -123,6 +206,19 @@ class DataPlane:
     @property
     def label(self) -> str:
         return f"{self.host}/{self.database}" if self.database else self.host
+
+    @property
+    def consequence(self) -> str:
+        """What an operator loses without this. The reason to go and ask."""
+        if self.used_by == "sentry":
+            if "slidata" in self.database:
+                return "The SLI view cannot load."
+            return "The incident queue cannot load."
+        if self.used_by == "both":
+            return "The incident queue cannot load, and skills lose incident context."
+        if self.required_by:
+            return f"{len(self.required_by)} skill(s) fall back to the evidence pack."
+        return "No installed skill depends on it."
 
 
 def _sentry_planes(config) -> dict[str, DataPlane]:
@@ -179,6 +275,7 @@ def discover_planes(config, skills) -> list[DataPlane]:
     for host, plane in planes.items():
         if not plane.purpose and host in REGISTRY:
             plane.database, plane.purpose = REGISTRY[host]
+        plane.access = access_for(host)
         if plane.redacted:
             plane.status = "redacted"
             plane.detail = "hostname is redacted in the reference; cannot be probed"

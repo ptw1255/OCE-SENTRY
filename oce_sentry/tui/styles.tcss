@@ -307,21 +307,17 @@ CreateBugScreen {
     max-height: 45%;
 }
 
+/* One full-width detail pane. The old right-hand log was empty most of the
+   time and cost half the width of the only part carrying real detail --
+   access requirements do not fit in sixty columns. */
 #set-detail {
     height: 1fr;
     border-top: solid $panel;
 }
 
 #set-info {
-    width: 60;
-    padding: 1 2;
-    overflow-y: auto;
-}
-
-#set-log {
     width: 1fr;
-    padding: 0 2;
-    border-left: solid $panel;
+    padding: 1 2;
 }
 
 #set-status {
@@ -330,3 +326,4 @@ CreateBugScreen {
     background: $panel;
     color: $text-muted;
 }
+

@@ -7,8 +7,11 @@ from pathlib import Path
 import pytest
 
 from oce_sentry.dataplanes import (
+    ACCESS,
+    BASELINE_ACCESS,
     REGISTRY,
     DataPlane,
+    access_for,
     discover_planes,
     plane_summary,
 )
@@ -154,3 +157,69 @@ def test_registry_entries_all_carry_a_database_and_a_purpose():
 def test_registry_covers_the_clusters_sentry_itself_uses():
     assert "icmcluster.kusto.windows.net" in REGISTRY
     assert "genevaslidatafollower.westcentralus.kusto.windows.net" in REGISTRY
+
+
+# --------------------------------------------------------------------- access
+
+
+def test_documented_clusters_carry_a_requirement_and_a_request_link():
+    """A denied cluster is useless information without the thing to request."""
+    for host in ACCESS:
+        access = access_for(host)
+        assert access.documented, host
+        assert access.request_url.startswith("https://"), host
+        assert access.source, host
+
+
+def test_access_is_attached_when_planes_are_discovered():
+    planes = {p.host: p for p in discover_planes(_Config(), [])}
+    icm = planes["icmcluster.kusto.windows.net"]
+    assert icm.access.requirement == "IcM-Kusto-Access entitlement"
+    assert "coreidentity.microsoft.com" in icm.access.request_url
+
+
+def test_an_undocumented_cluster_says_so_rather_than_guessing():
+    """Inventing an entitlement sends an operator to the wrong approver."""
+    planes = {p.host: p for p in discover_planes(_Config(), [_skill("s", "apim.kusto.windows.net")])}
+    apim = planes["apim.kusto.windows.net"]
+    assert not apim.access.documented
+    assert apim.access.short == "-"
+
+
+def test_access_short_form_fits_a_table_cell():
+    access = access_for("spoemeakustocluster.northeurope.kusto.windows.net")
+    assert access.short == "Corp-ODSP-ReadAccess_User"
+    assert len(access.short) <= 34
+
+
+def test_both_spo_clusters_point_at_the_same_request():
+    """The onboarding guide says one request covers both; saying otherwise
+    would have an operator file a duplicate."""
+    a = access_for("spogdskustocluster.eastus2.kusto.windows.net")
+    b = access_for("spoemeakustocluster.northeurope.kusto.windows.net")
+    assert a.request_url == b.request_url
+
+
+def test_the_baseline_names_az_login():
+    assert "az login" in BASELINE_ACCESS
+
+
+# ---------------------------------------------------------------- consequence
+
+
+def test_consequence_distinguishes_the_console_from_a_skill():
+    """The reason to go and request access differs by what breaks."""
+    planes = {p.host: p for p in discover_planes(_Config(), [])}
+    icm = planes["icmcluster.kusto.windows.net"]
+    assert icm.consequence == "The incident queue cannot load."
+    sli = next(p for p in planes.values() if "slidata" in p.database)
+    assert sli.consequence == "The SLI view cannot load."
+
+
+def test_consequence_counts_the_skills_that_would_degrade():
+    plane = DataPlane(host="h", used_by="skills", required_by=["a", "b"])
+    assert plane.consequence == "2 skill(s) fall back to the evidence pack."
+
+
+def test_consequence_is_honest_when_nothing_depends_on_it():
+    assert DataPlane(host="h", used_by="skills").consequence == "No installed skill depends on it."
