@@ -101,15 +101,52 @@ def shell_escalation_enabled() -> bool:
     return os.environ.get("OCE_SENTRY_ALLOW_SKILL_SHELL", "0") == "1"
 
 
-def build_prompt(skill: Skill, incident: Incident, pack: ContextPack) -> str:
+#: CreateProcess caps an entire command line at 32767 characters on Windows,
+#: and execve has comparable limits elsewhere. Sentry's own skills were a few
+#: thousand characters, so passing the instruction as an argument worked until
+#: the ODSP skills arrived: 17 of 70 exceed the cap outright, the largest at
+#: 151K, and `icm`, `sql`, `redis`, `network` and `dns` are all over it. Those
+#: sit in five of the nine kits, so the failure was not an edge case.
+#:
+#: The budget is deliberately well under the hard cap. The rest of the command
+#: line -- the executable path, the pack directory, the flags -- also counts,
+#: and a limit that only fails on the longest possible pack path is a limit
+#: that fails in production rather than in testing.
+PROMPT_ARG_BUDGET = 16000
+
+#: Filename used when the instruction is too long to pass as an argument.
+INSTRUCTION_FILE = "instruction.md"
+
+
+def build_prompt(
+    skill: Skill,
+    incident: Incident,
+    pack: ContextPack,
+    instruction_path: Path | None = None,
+) -> str:
     """Skill instruction plus a pointer to the evidence.
 
     The incident's own text is never interpolated into the instruction. It sits
     in the pack as data, which keeps a hostile or merely awkward incident title
     from reading as instruction.
+
+    When `instruction_path` is given the skill body is referenced rather than
+    inlined, because it does not fit in a command-line argument.
     """
+    if instruction_path is not None:
+        body = (
+            "Your instructions for this task are in the file below. Read it in full "
+            "before doing anything else, then carry it out.\n\n"
+            f"    {instruction_path}\n\n"
+            "That file is the complete task definition. Do not ask for it to be "
+            "repeated and do not proceed on a guess about its contents: if you "
+            "cannot read it, say so and stop."
+        )
+    else:
+        body = skill.body
+
     return (
-        f"{skill.body}\n\n"
+        f"{body}\n\n"
         "---\n"
         f"The evidence for this task is in: {pack.directory}\n"
         f"Start with context.md, then incident.json. base-rates.md, when present, is "
@@ -122,16 +159,38 @@ def build_prompt(skill: Skill, incident: Incident, pack: ContextPack) -> str:
     )
 
 
+def write_instruction(skill: Skill, pack: ContextPack) -> Path:
+    """Put the skill body in the pack so it can be referenced, not passed.
+
+    It lands in the pack rather than a scratch file because the pack is the
+    record of what a run was given. A pack that holds the evidence but not the
+    instruction cannot be used to explain an answer after the fact.
+    """
+    path = pack.directory / INSTRUCTION_FILE
+    path.write_text(skill.body, encoding="utf-8")
+    return path
+
+
+def _command_length(command: list[str]) -> int:
+    """Length of the command line as the OS will see it.
+
+    Quoting adds to this, so the joined length is a floor rather than an exact
+    figure -- which is why the budget sits well under the hard cap.
+    """
+    return sum(len(part) + 3 for part in command)
+
+
 def build_command(
     skill: Skill,
     incident: Incident,
     pack: ContextPack,
     allow_shell: bool = False,
+    instruction_path: Path | None = None,
 ) -> list[str]:
     command = [
         find_copilot(),
         "-p",
-        build_prompt(skill, incident, pack),
+        build_prompt(skill, incident, pack, instruction_path=instruction_path),
         "--add-dir",
         str(pack.directory),
         "--no-ask-user",
@@ -148,8 +207,63 @@ def build_command(
     return command
 
 
+#: Copilot narrates its tool calls to stdout: a glyph, the tool name, then
+#: indented argument and result lines.
+#:
+#:     ● Read instruction.md
+#:       └ L1:150 (149 lines read)
+#:     ✗ List evidence pack files (shell)
+#:       │ Get-ChildItem -Recurse
+#:       └ Permission to run this tool was denied
+#:
+#: Useful while streaming, noise afterwards. A skill that reads six files
+#: produced thirty lines of this before its first sentence, and both the kit
+#: view and the CLI show the first twenty lines of an answer -- so the operator
+#: was reliably shown no answer at all.
+_TRACE_GLYPHS = ("●", "✗", "✓", "│", "└", "├", "⏺", "⎿")
+
+#: The tool header line, e.g. "/ Search (glob)". Matched narrowly because a
+#: bare "/" prefix is plausible in real prose about paths.
+_TOOL_HEADER = re.compile(r"^/ [A-Z][A-Za-z ]*\([a-z-]+\)\s*$")
+
+
+def _is_trace(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    return stripped.startswith(_TRACE_GLYPHS) or bool(_TOOL_HEADER.match(stripped))
+
+
+def strip_trace(text: str) -> str:
+    """Remove the tool-call narration, keeping the model's prose.
+
+    Runs of blank lines left where a trace block was removed get collapsed --
+    otherwise the answer arrives full of holes, and the first screen of a
+    result is mostly whitespace.
+
+    If stripping would leave nothing the original is returned instead: showing
+    an empty answer is worse than showing a noisy one, and a run whose entire
+    output was trace is exactly the case an operator needs to see.
+    """
+    kept: list[str] = []
+    blanks = 0
+    for line in text.splitlines():
+        if _is_trace(line):
+            continue
+        if line.strip():
+            blanks = 0
+            kept.append(line)
+            continue
+        blanks += 1
+        if blanks == 1:
+            kept.append(line)
+
+    cleaned = "\n".join(kept).strip()
+    return cleaned or text.strip()
+
+
 def parse_run_output(text: str) -> tuple[str, str, float | None]:
-    """Split the CLI's trailer off the answer.
+    """Split the CLI's trailer and tool narration off the answer.
 
     Copilot prints a summary block (Changes / AI Credits / Tokens / Resume)
     after the response. That is telemetry about the run, not part of it, so it
@@ -174,7 +288,7 @@ def parse_run_output(text: str) -> tuple[str, str, float | None]:
         if stripped.startswith(("Changes ", "AI Credits", "Tokens ", "Resume ")):
             continue
         answer_lines.append(line)
-    return "\n".join(answer_lines).strip(), session, credits
+    return strip_trace("\n".join(answer_lines)), session, credits
 
 
 def run_skill(
@@ -195,6 +309,19 @@ def run_skill(
         )
 
     command = build_command(skill, incident, pack, allow_shell=allow_shell)
+    # Fall back to referencing the instruction only when inlining will not fit.
+    # Inlining is the stronger path -- the model cannot fail to read what is
+    # already in its prompt -- so it stays the default rather than being
+    # abandoned for uniformity.
+    if _command_length(command) > PROMPT_ARG_BUDGET:
+        instruction_path = write_instruction(skill, pack)
+        command = build_command(
+            skill,
+            incident,
+            pack,
+            allow_shell=allow_shell,
+            instruction_path=instruction_path,
+        )
     timeout = timeout or config.action_timeout
     run_id = uuid.uuid4().hex[:12]
     started = utcnow()
@@ -285,7 +412,20 @@ def _persist(run: SkillRun, config) -> Path | None:
         target.mkdir(parents=True, exist_ok=True)
         stem = f"{run.started_at.replace(':', '').replace('-', '')[:15]}-skill-{run.skill_id}-{run.run_id}"
 
-        (target / f"{stem}.md").write_text(run.answer or run.stdout, encoding="utf-8")
+        # The answer leads and the narration follows, rather than the answer
+        # being buried thirty lines into a transcript. Both are kept: the trace
+        # is how you tell "found nothing" apart from "was refused a tool".
+        document = run.answer or run.stdout
+        if run.stdout and run.stdout.strip() != (run.answer or "").strip():
+            document = (
+                f"{document}\n\n"
+                "---\n\n"
+                "<details>\n<summary>Full transcript, including tool calls</summary>\n\n"
+                "```\n"
+                f"{run.stdout.strip()}\n"
+                "```\n\n</details>\n"
+            )
+        (target / f"{stem}.md").write_text(document, encoding="utf-8")
 
         sidecar = {
             "runId": run.run_id,

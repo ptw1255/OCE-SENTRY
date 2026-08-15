@@ -245,7 +245,7 @@ def run_kit_cli(
         print(f"incidents unavailable: {result.error}", file=sys.stderr)
         return 1
 
-    match = next((i for i in result.incidents if i.incident_id == incident_id), None)
+    match = next((i for i in result.data if i.incident_id == str(incident_id)), None)
     if match is None:
         print(f"Incident {incident_id} is not on the watchlist.", file=sys.stderr)
         return 1

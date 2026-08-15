@@ -7,10 +7,14 @@ from pathlib import Path
 import pytest
 
 from oce_sentry.copilot import (
+    PROMPT_ARG_BUDGET,
+    _command_length,
     build_command,
     build_prompt,
     parse_run_output,
     shell_escalation_enabled,
+    strip_trace,
+    write_instruction,
 )
 from oce_sentry.packs import ContextPack
 from oce_sentry.skills import (
@@ -101,6 +105,137 @@ def test_no_skill_source_without_configuration(monkeypatch):
     """With nothing configured there are no skills, rather than a fallback set."""
     monkeypatch.delenv("OCE_SENTRY_SKILLS", raising=False)
     assert discover_skills(None) == []
+
+
+# ------------------------------------------------- command-line length limits
+
+
+def _huge_skill(chars: int) -> Skill:
+    return _skill(id="huge", name="Huge", body="x" * chars)
+
+
+def test_large_skill_is_referenced_not_inlined(tmp_path):
+    """A 150K skill body cannot be passed as an argument.
+
+    CreateProcess caps the whole command line at 32767 characters. Sentry's own
+    skills were small enough that inlining always worked; 17 of the 70 ODSP
+    skills exceed the cap outright, and five of the nine kits contain one, so
+    this was a live failure and not a theoretical one.
+    """
+    pack = ContextPack(directory=tmp_path, incident_id="850000001", files=[])
+    skill = _huge_skill(150_000)
+
+    inlined = build_command(skill, _incident(), pack)
+    assert _command_length(inlined) > PROMPT_ARG_BUDGET
+
+    path = write_instruction(skill, pack)
+    referenced = build_command(skill, _incident(), pack, instruction_path=path)
+
+    assert _command_length(referenced) < 32767
+    assert "x" * 1000 not in " ".join(referenced)
+    assert str(path) in " ".join(referenced)
+
+
+def test_instruction_lands_in_the_pack(tmp_path):
+    """The pack must record what the run was given, not just its evidence."""
+    pack = ContextPack(directory=tmp_path, incident_id="850000001", files=[])
+    skill = _huge_skill(50_000)
+    path = write_instruction(skill, pack)
+
+    assert path.parent == tmp_path
+    assert path.read_text(encoding="utf-8") == skill.body
+
+
+def test_referenced_prompt_forbids_guessing():
+    """A model that cannot read the file must stop, not improvise a task."""
+    pack = ContextPack(directory=Path("."), incident_id="850000001", files=[])
+    prompt = build_prompt(
+        _huge_skill(50_000), _incident(), pack, instruction_path=Path("i.md")
+    )
+    assert "cannot read it, say so and stop" in prompt
+    assert "xxxx" not in prompt
+
+
+def test_small_skills_stay_inlined(tmp_path):
+    """Inlining is the stronger path and stays the default.
+
+    The model cannot fail to read what is already in its prompt, so the file
+    indirection is a fallback rather than a uniform mechanism.
+    """
+    pack = ContextPack(directory=tmp_path, incident_id="850000001", files=[])
+    command = build_command(_skill(body="Assess the blast radius."), _incident(), pack)
+    assert "Assess the blast radius." in " ".join(command)
+    assert _command_length(command) < PROMPT_ARG_BUDGET
+
+
+def test_budget_leaves_room_for_the_rest_of_the_command_line():
+    """The prompt is not the only thing on the command line."""
+    assert PROMPT_ARG_BUDGET < 32767 / 2
+
+
+# ------------------------------------------------------- tool-call narration
+
+_REAL_TRACE = """I'll start by reading the instruction file.
+
+● Read instruction.md
+  └ L1:150 (149 lines read)
+
+✗ List evidence pack files (shell)
+  │ Get-ChildItem -Recurse "C:\\packs\\1" | Select-Object FullName
+  └ Permission to run this tool was denied due to the following rules: `shell`
+
+/ Search (glob)
+  │ "**/*"
+  └ 5 files found
+
+## Incident 841552464 - Outage Pattern Analysis
+
+Assessment: ISOLATED - single signature, single farm.
+"""
+
+
+def test_tool_narration_is_stripped_from_the_answer():
+    """The operator sees the answer, not thirty lines of file reads.
+
+    Both the kit view and the CLI print the first twenty lines of a result, and
+    a skill that reads six files produced more narration than that before its
+    first sentence -- so the answer was reliably off screen.
+    """
+    cleaned = strip_trace(_REAL_TRACE)
+    assert "## Incident 841552464" in cleaned
+    assert "Assessment: ISOLATED" in cleaned
+    assert "Read instruction.md" not in cleaned
+    assert "Get-ChildItem" not in cleaned
+    assert "Search (glob)" not in cleaned
+    # Prose between tool calls is the model talking, and is kept.
+    assert "I'll start by reading" in cleaned
+
+
+def test_stripping_does_not_leave_the_answer_full_of_holes():
+    cleaned = strip_trace(_REAL_TRACE)
+    assert "\n\n\n" not in cleaned
+
+
+def test_pure_trace_output_is_returned_rather_than_blanked():
+    """A run that produced only tool calls is what an operator most needs to see."""
+    only_trace = "● Read a.md\n  └ 1 line read\n"
+    assert strip_trace(only_trace).strip() == only_trace.strip()
+
+
+def test_prose_about_paths_is_not_mistaken_for_a_tool_call():
+    """The `/ Tool (kind)` header is matched narrowly for this reason."""
+    prose = "/ is the repository root, not a tool call.\nSee /var/log (it rotates)."
+    assert strip_trace(prose) == prose
+
+
+def test_parse_run_output_strips_both_trailer_and_narration():
+    text = _REAL_TRACE + "\nAI Credits 0.42\nResume copilot --resume=abc123def456\n"
+    answer, session, credits = parse_run_output(text)
+    assert "Read instruction.md" not in answer
+    assert "AI Credits" not in answer
+    assert "Assessment: ISOLATED" in answer
+    assert session == "abc123def456"
+    assert credits == 0.42
 
 
 def test_skill_without_monitor_applies_to_every_incident():
