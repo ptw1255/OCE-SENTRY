@@ -19,6 +19,9 @@ Screen {
     min-width: 36;
     height: 100%;
     border-left: solid $panel;
+    /* Reserve the scrollbar column so long lines keep their last word. */
+    scrollbar-gutter: stable;
+    padding: 1 2;
 }
 
 /* Below roughly 100 columns the pane costs more than it gives: the incident
@@ -29,8 +32,7 @@ Screen.-narrow #side {
 
 #detail {
     height: auto;
-    min-height: 14;
-    padding: 1 2;
+    width: 1fr;
 }
 
 /* Make the cursor row unmistakable: the detail pane follows it, and on a dense
@@ -44,12 +46,6 @@ DataTable > .datatable--cursor {
 DataTable {
     scrollbar-size-vertical: 1;
     scrollbar-size-horizontal: 1;
-}
-
-#log {
-    height: 1fr;
-    border-top: solid $panel;
-    padding: 0 2;
 }
 
 #status {
@@ -148,6 +144,8 @@ CreateBugScreen {
 #bug-scroll {
     height: 1fr;
     overflow-y: auto;
+    /* Reserve the scrollbar column so it cannot overlay the form. */
+    scrollbar-gutter: stable;
 }
 
 #bug-note {
@@ -176,43 +174,6 @@ CreateBugScreen {
 }
 
 
-#kit-body {
-    height: 1fr;
-}
-
-#kit-table {
-    height: auto;
-    max-height: 45%;
-}
-
-#kit-detail {
-    height: 1fr;
-    border-top: solid $panel;
-}
-
-#kit-summary {
-    width: 44;
-    padding: 1 2;
-}
-
-#kit-content {
-    width: 1fr;
-    padding: 1 2;
-    border-left: solid $panel;
-    overflow-y: auto;
-}
-
-#kit-status {
-    height: 1;
-    padding: 0 1;
-    background: $panel;
-    color: $text-muted;
-}
-
-
-
-
-
 #lib-body {
     height: 1fr;
 }
@@ -228,11 +189,15 @@ CreateBugScreen {
 #lib-detail {
     height: 1fr;
     border-top: solid $panel;
+    /* Without a stable gutter the scrollbar overlays the last two columns
+       and long lines lose their final word -- text that simply vanishes
+       rather than wrapping. */
+    scrollbar-gutter: stable;
+    padding: 1 2;
 }
 
 #lib-summary {
     width: 1fr;
-    padding: 1 2;
 }
 
 #lib-status {
@@ -265,11 +230,12 @@ CreateBugScreen {
 #kit-detail {
     height: 1fr;
     border-top: solid $panel;
+    scrollbar-gutter: stable;
+    padding: 1 2;
 }
 
 #kit-summary {
     width: 1fr;
-    padding: 1 2;
 }
 
 #kit-status {
@@ -303,11 +269,12 @@ CreateBugScreen {
 #set-detail {
     height: 1fr;
     border-top: solid $panel;
+    scrollbar-gutter: stable;
+    padding: 1 2;
 }
 
 #set-info {
     width: 1fr;
-    padding: 1 2;
 }
 
 #set-status {

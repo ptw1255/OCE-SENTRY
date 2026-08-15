@@ -18,9 +18,9 @@ from datetime import datetime, timezone
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import DataTable, Footer, Header, Label, RichLog, Static
+from textual.widgets import DataTable, Footer, Header, Label, Static
 
 from ..actions import Action, ActionRun, actions_for, build_command, discover_kits, run_action
 from ..auth import AuthError, TokenProvider
@@ -106,14 +106,21 @@ class IncidentScreen(Screen):
         self._generation = 0
         self._last_result: SourceResult | None = None
         self._busy = False
+        self._provenance = ""
+        #: "detail" while browsing, "output" while an action is running.
+        self._pane = "detail"
+        self._output: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="body"):
             yield DataTable(id="incidents", cursor_type="row", zebra_stripes=True)
-            with Vertical(id="side"):
+            # One pane, not a detail box above a log. The log held a startup
+            # provenance line for the whole session and then sat empty, which
+            # cost the bottom half of the side column permanently. It now
+            # shows the selected incident, and takes over for a run's output.
+            with VerticalScroll(id="side"):
                 yield Static("Loading...", id="detail")
-                yield RichLog(id="log", wrap=True, markup=True, highlight=False)
         yield Static("", id="status")
         yield Footer()
 
@@ -132,10 +139,11 @@ class IncidentScreen(Screen):
         # title -- which is the column an OCE actually reads.
         table.add_columns("SEV", "AGE", "FLAG", "ENV", "INCIDENT", "TITLE")
         self._kits = discover_kits(self._config)
-        # Short enough to survive the pane width. Full paths were truncating
-        # mid-word, which reads as a rendering bug rather than as provenance.
-        kits = f"{len(self._kits)} kit(s)" if self._kits else "[yellow]no kits - press k[/yellow]"
-        self._log(f"[dim]policy {self._config.policy.label}[/dim] - {kits}")
+        # Provenance belongs on the status line, not in a pane. It is set once
+        # and never changes, so giving it half the side column for a whole
+        # shift was the wrong trade.
+        kits = f"{len(self._kits)} kit(s)" if self._kits else "no kits"
+        self._provenance = f"{self._config.policy.label} - {kits}"
         self.refresh_incidents()
         self.set_interval(self._config.intervals.get("incidents", 300), self.refresh_incidents)
 
@@ -226,6 +234,8 @@ class IncidentScreen(Screen):
     @on(DataTable.RowHighlighted)
     def _on_row(self) -> None:
         self._selected_action = 0
+        # Moving the cursor is how you get back from a finished run's output.
+        self._pane = "detail"
         self._update_detail()
 
     def _update_detail(self) -> None:
@@ -393,10 +403,28 @@ class IncidentScreen(Screen):
     # ----------------------------------------------------------------- chrome
 
     def _log(self, message: str) -> None:
-        self.query_one("#log", RichLog).write(message)
+        """Append to the run output and show it in the side pane."""
+        self._output.append(message)
+        self._pane = "output"
+        self._render_pane()
+
+    def _render_pane(self) -> None:
+        if self._pane == "output":
+            body = "\n".join(self._output[-400:]) or "(no output)"
+            hint = "\n\n[dim]Move the cursor to go back to the incident.[/dim]"
+            self.query_one("#detail", Static).update(body + hint)
+        else:
+            self._update_detail()
 
     def _set_status(self, message: str) -> None:
-        self.query_one("#status", Static).update(message)
+        """The status line also carries provenance.
+
+        Which policy and how many kits are loaded never changes during a
+        session, so it belongs on a line that is always there rather than in a
+        pane that could be showing something useful.
+        """
+        suffix = f"     [dim]{self._provenance}[/dim]" if self._provenance else ""
+        self.query_one("#status", Static).update(f"{message}{suffix}")
 
 
 def _age(incident: Incident) -> str:
