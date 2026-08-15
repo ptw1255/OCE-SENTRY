@@ -212,3 +212,37 @@ CreateBugScreen {
 
 
 
+
+#lib-body {
+    height: 1fr;
+}
+
+#lib-table {
+    height: auto;
+    max-height: 50%;
+}
+
+#lib-detail {
+    height: 1fr;
+    border-top: solid $panel;
+}
+
+#lib-summary {
+    width: 52;
+    padding: 1 2;
+    overflow-y: auto;
+}
+
+#lib-output {
+    width: 1fr;
+    padding: 0 2;
+    border-left: solid $panel;
+}
+
+#lib-status {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+}
+

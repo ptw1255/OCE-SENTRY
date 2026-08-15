@@ -91,7 +91,7 @@ class IncidentScreen(Screen):
         Binding("bracketright", "next_action", "Next action", key_display="]"),
         Binding("bracketleft", "prev_action", "Prev action", key_display="["),
         Binding("s", "show_slis", "SLIs"),
-        Binding("k", "show_kits", "Kits"),
+        Binding("k", "show_kits", "Actions"),
         Binding("b", "show_bugs", "Bugs"),
         Binding("c", "create_bug", "New bug"),
         Binding("q", "quit", "Quit"),
@@ -295,9 +295,12 @@ class IncidentScreen(Screen):
         self.app.push_screen(SliScreen(self._config, self._tokens))
 
     def action_show_kits(self) -> None:
-        from .kit_screen import KitScreen
+        """The action library, bound to whatever incident is selected."""
+        from .library_screen import LibraryScreen
 
-        self.app.push_screen(KitScreen(self._config))
+        self.app.push_screen(
+            LibraryScreen(self._config, self._tokens, self._current_incident())
+        )
 
     def action_show_bugs(self) -> None:
         from .bug_screen import BugScreen
@@ -447,6 +450,7 @@ class OceSentryApp(App):
 def run_app(config: Config, tokens: TokenProvider) -> int:
     OceSentryApp(config, tokens).run()
     return 0
+
 
 
 
