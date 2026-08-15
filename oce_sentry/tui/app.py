@@ -120,7 +120,14 @@ class IncidentScreen(Screen):
         yield Static("", id="status")
         yield Footer()
 
+    #: Below this width the detail pane is dropped; see styles.tcss.
+    NARROW = 100
+
+    def on_resize(self, event) -> None:
+        self.set_class(event.size.width < self.NARROW, "-narrow")
+
     def on_mount(self) -> None:
+        self.set_class(self.app.size.width < self.NARROW, "-narrow")
         table = self.query_one("#incidents", DataTable)
         # Deliberately few columns. Everything dropped here (owner, monitor,
         # track reason) is one keystroke away in the detail pane, and at a
@@ -128,10 +135,10 @@ class IncidentScreen(Screen):
         # title -- which is the column an OCE actually reads.
         table.add_columns("SEV", "AGE", "FLAG", "ENV", "INCIDENT", "TITLE")
         self._kits = discover_kits(self._config)
-        self._log(
-            f"[dim]policy {self._config.policy.label} - "
-            f"{len(self._kits)} kit(s) - output {self._config.output_dir}[/dim]"
-        )
+        # Short enough to survive the pane width. Full paths were truncating
+        # mid-word, which reads as a rendering bug rather than as provenance.
+        kits = f"{len(self._kits)} kit(s)" if self._kits else "[yellow]no kits - press k[/yellow]"
+        self._log(f"[dim]policy {self._config.policy.label}[/dim] - {kits}")
         self.refresh_incidents()
         self.set_interval(self._config.intervals.get("incidents", 300), self.refresh_incidents)
 
@@ -178,9 +185,12 @@ class IncidentScreen(Screen):
         self._incidents = result.data
         self._render_table()
         detail = result.detail
+        # "27 open (30 already mitigated)" rather than "57 in scope": an OCE
+        # reads the latter as "30 are being hidden from me".
+        closed = max(detail["rows_returned"] - len(result.data), 0)
         self._set_status(
-            f"{len(result.data)} open - {detail['rows_returned']} in scope - "
-            f"{detail['duration_ms']}ms - {result.age_label()} - policy {self._config.policy.label}"
+            f"{len(result.data)} open  ({closed} already mitigated) - "
+            f"{result.age_label()} - {detail['duration_ms']}ms"
         )
 
     def _render_table(self) -> None:
@@ -437,6 +447,8 @@ class OceSentryApp(App):
 def run_app(config: Config, tokens: TokenProvider) -> int:
     OceSentryApp(config, tokens).run()
     return 0
+
+
 
 
 

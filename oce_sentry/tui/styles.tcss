@@ -15,16 +15,35 @@ Screen {
 }
 
 #side {
-    width: 52;
-    min-width: 40;
+    width: 42;
+    min-width: 36;
     height: 100%;
     border-left: solid $panel;
+}
+
+/* Below roughly 100 columns the pane costs more than it gives: the incident
+   column collapses to two characters and the queue stops being readable. */
+Screen.-narrow #side {
+    display: none;
 }
 
 #detail {
     height: auto;
     min-height: 14;
     padding: 1 2;
+}
+
+/* Make the cursor row unmistakable: the detail pane follows it, and on a dense
+   table it is otherwise easy to lose which incident you are reading. */
+DataTable > .datatable--cursor {
+    background: $accent;
+    color: $text;
+    text-style: bold;
+}
+
+DataTable {
+    scrollbar-size-vertical: 1;
+    scrollbar-size-horizontal: 1;
 }
 
 #log {
@@ -113,33 +132,47 @@ CreateBugScreen {
     align: center middle;
 }
 
+/* The form scrolls and the buttons are pinned. Previously the buttons were
+   laid out below the content, which put them off-screen on a 26-row terminal:
+   the one screen where a human types something had an invisible submit. */
 #bug-form {
-    width: 100;
-    height: auto;
-    max-height: 90%;
+    width: 96;
+    max-width: 96%;
+    height: 90%;
     padding: 1 2;
     border: thick $accent;
     background: $surface;
+    layout: vertical;
+}
+
+#bug-scroll {
+    height: 1fr;
+    overflow-y: auto;
 }
 
 #bug-note {
-    height: 8;
+    height: 7;
     margin: 1 0;
 }
 
 #bug-preview {
     height: auto;
-    max-height: 30;
     padding: 1 0;
 }
 
 #bug-form-buttons {
-    height: auto;
+    height: 3;
+    dock: bottom;
     margin-top: 1;
 }
 
 #bug-form-buttons Button {
     margin-right: 2;
+}
+
+#bug-form-status {
+    height: auto;
+    max-height: 2;
 }
 
 
@@ -175,4 +208,7 @@ CreateBugScreen {
     background: $panel;
     color: $text-muted;
 }
+
+
+
 

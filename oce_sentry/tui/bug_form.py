@@ -16,9 +16,9 @@ import webbrowser
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, RadioButton, RadioSet, Static, TextArea
+from textual.widgets import Button, Footer, Label, RadioButton, RadioSet, Static, TextArea
 
 from ..ado import AdoClient, AdoError
 from ..bugs import CATEGORIES, BugDraft, BugDraftError, draft_bug, file_bug
@@ -43,20 +43,33 @@ class CreateBugScreen(ModalScreen[dict | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="bug-form"):
-            yield Label("[b]Create a bug[/b]", id="bug-form-title")
-            yield Static(self._context_line(), id="bug-form-context")
-            yield Label("What is wrong?")
-            yield RadioSet(*[RadioButton(label, id=f"cat-{key}") for key, label in CATEGORIES], id="bug-category")
-            yield Label("Describe it in your own words:")
-            yield TextArea(id="bug-note")
+            with VerticalScroll(id="bug-scroll"):
+                yield Label("[b]Create a bug[/b]", id="bug-form-title")
+                yield Static(self._context_line(), id="bug-form-context")
+                yield Label("What is wrong?")
+                yield RadioSet(
+                    *[RadioButton(label, id=f"cat-{key}") for key, label in CATEGORIES],
+                    id="bug-category",
+                )
+                yield Label("Describe it in your own words:")
+                yield TextArea(id="bug-note")
             yield Static("", id="bug-form-status")
             with Horizontal(id="bug-form-buttons"):
                 yield Button("Draft the bug", variant="primary", id="draft")
                 yield Button("Cancel", id="cancel")
+        # The modal carries its own Footer so the visible key hints belong to
+        # THIS screen. Without it the footer underneath shows through, listing
+        # keys that do nothing here and omitting the two that matter.
+        yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#bug-category", RadioSet).children[0].value = True
-        self.query_one("#bug-note", TextArea).focus()
+        note = self.query_one("#bug-note", TextArea)
+        note.focus()
+        # Focusing the note box scrolls it into view and takes the heading with
+        # it; put the form back at the top so the operator sees what they are
+        # filling in.
+        self.call_after_refresh(lambda: self.query_one("#bug-scroll", VerticalScroll).scroll_home(animate=False))
 
     def _context_line(self) -> str:
         if self._incident is None:
@@ -133,10 +146,13 @@ class CreateBugScreen(ModalScreen[dict | None]):
         cost = f" - {draft.credits:g} credits" if draft.credits is not None else ""
         body_preview = _strip_html(draft.body_html)
 
-        container = self.query_one("#bug-form", Vertical)
-        container.remove_children()
-        container.mount(Label("[b]Review the bug before it is filed[/b]"))
-        container.mount(
+        # Only the scrolling region is replaced. The button row is docked and
+        # must survive the stage change, or the review step loses its own
+        # submit -- the exact failure this layout was changed to prevent.
+        scroll = self.query_one("#bug-scroll", VerticalScroll)
+        scroll.remove_children()
+        scroll.mount(Label("[b]Review the bug before it is filed[/b]"))
+        scroll.mount(
             Static(
                 f"[b]Title[/b]\n{_escape(draft.title)}\n\n"
                 f"[b]Body[/b]\n{_escape(body_preview)}\n\n"
@@ -145,11 +161,13 @@ class CreateBugScreen(ModalScreen[dict | None]):
                 id="bug-preview",
             )
         )
-        container.mount(Static("", id="bug-form-status"))
-        buttons = Horizontal(id="bug-form-buttons")
-        container.mount(buttons)
+
+        buttons = self.query_one("#bug-form-buttons", Horizontal)
+        buttons.remove_children()
         buttons.mount(Button("Create the bug", variant="success", id="file"))
-        buttons.mount(Button("Cancel", id="cancel"))
+        buttons.mount(Button("Back", id="cancel"))
+        buttons.mount(Static("  esc cancel", id="bug-form-hint"))
+        self._status("")
 
     # ------------------------------------------------------------------- file
 
@@ -203,3 +221,6 @@ def _strip_html(markup: str) -> str:
 
 def _escape(text: str) -> str:
     return str(text).replace("[", r"\[")
+
+
+
