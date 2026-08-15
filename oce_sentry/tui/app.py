@@ -90,7 +90,7 @@ class IncidentScreen(Screen):
         Binding("k", "show_kits", "Kits"),
         Binding("l", "show_skills", "Skills"),
         Binding("b", "show_bugs", "Bugs"),
-        Binding("comma", "show_settings", "Settings", key_display=","),
+        Binding("exclamation_mark", "show_settings", "Settings", key_display="!"),
         Binding("q", "quit", "Quit"),
     ]
 

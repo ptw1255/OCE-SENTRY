@@ -196,7 +196,7 @@ Skills that build or maintain the agent fleet rather than work an incident — `
 
 ### Settings and connectors
 
-`,` opens **Settings**: every MCP connector, whether it can start on this machine, and which skills need it.
+`!` opens **Settings**: every MCP connector, whether it can start on this machine, and which skills need it.
 
 ```
 CONNECTOR            STATUS   KIND   PURPOSE                                   NEEDED BY
@@ -258,7 +258,7 @@ cannot drive a TUI.
 
 `↑`/`↓` select incident · `x` run the matched action (confirmation shows the
 exact command) · `o` open in IcM · `t` open the TSG · `k` kits · `l` skills ·
-`s` SLIs · `b` bugs · `,` settings · `r` refresh · `q` quit.
+`s` SLIs · `b` bugs · `!` settings · `r` refresh · `q` quit.
 
 Screen keys stay on their screen: `c` files a bug from the bug tracker, not from
 the queue.
