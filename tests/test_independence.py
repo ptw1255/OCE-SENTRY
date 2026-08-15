@@ -8,6 +8,7 @@ the goobers pipeline and get a working queue.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -28,6 +29,11 @@ def bare(monkeypatch, tmp_path):
     for name in ENV_VARS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("OCE_SENTRY_STATE_DIR", str(tmp_path / "state"))
+    # Isolate from the developer's own checkouts: kit auto-discovery looks at
+    # the working directory and the home directory, so a real repository next
+    # door would otherwise decide the result of these tests.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
     return tmp_path
 
 
@@ -96,3 +102,5 @@ def test_kits_can_be_configured_without_a_fleet_checkout(bare, monkeypatch):
 def test_no_kits_configured_is_not_an_error(bare):
     # The queue is the point; runbooks are additive.
     assert load_config().kits_dir is None
+
+

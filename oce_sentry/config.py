@@ -142,6 +142,26 @@ def _default_state_dir() -> Path:
     return Path(base) / "oce-sentry"
 
 
+#: Where kits usually are, when nobody has said otherwise. Sentry's companion
+#: is the MeTA fleet repository, and requiring an environment variable to find
+#: a checkout sitting next to this one turns a working install into an empty
+#: one for no reason.
+_KIT_CANDIDATES = (
+    Path("meta-livesite-agent-expander") / "kits",
+    Path("..") / "meta-livesite-agent-expander" / "kits",
+)
+
+
+def _discover_kits_nearby() -> Path | None:
+    roots = [Path.cwd(), Path.home() / "repos", Path.home()]
+    for root in roots:
+        for candidate in _KIT_CANDIDATES:
+            path = (root / candidate).resolve()
+            if path.is_dir():
+                return path
+    return None
+
+
 def _resolve_kits() -> Path | None:
     """Runbooks are optional and never vendored.
 
@@ -156,8 +176,10 @@ def _resolve_kits() -> Path | None:
     fleet = _env_path("OCE_SENTRY_FLEET_REPO")
     if fleet:
         candidate = fleet / "kits"
-        return candidate if candidate.is_dir() else None
-    return None
+        if candidate.is_dir():
+            return candidate
+
+    return _discover_kits_nearby()
 
 
 def _resolve_watchlist() -> Path | None:
