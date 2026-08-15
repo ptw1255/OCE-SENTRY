@@ -126,6 +126,23 @@ The headline is the **error budget**, not the percentage. An SLI reading 99.89% 
 
 Adding a third SLI is a config change, not a release: point `OCE_SENTRY_SLI_REGISTRY` at a JSON file of `{id, name, table, objective, description}` entries.
 
+### Filing and tracking bugs
+
+`c` opens **CREATE BUG**: pick a category (noisy monitor, TSG gap, routing, process, other), describe the problem in your own words, and a skill drafts a well-formed bug from your note plus whatever Sentry knows about the incident on screen. **You read the draft before anything is created.** `b` opens the tracker.
+
+```powershell
+oce-sentry --bugs                      # open bugs, most-stalled first
+oce-sentry --bugs --all                # include closed
+oce-sentry --create-bug "the TSG links to a dashboard that no longer exists" \
+           --category tsg --incident 836736526 --dry-run
+```
+
+Bugs are created in `onedrive/OneBranch`, area path `OneBranch\NEXUS\MeTA`, assigned to `parkerwall@microsoft.com`, tagged `meta-monitor-noise` — the same board and tag the fleet's automated noise bugs use, so one query finds them all. An extra `oce-sentry` tag keeps operator-filed bugs distinguishable within that set, and the tracker shows the difference in its SOURCE column.
+
+The tracker sorts by **idle time**, not age: a bug filed months ago and touched yesterday is being worked; one filed last week and untouched since is not. Anything untouched for more than 14 days is called out.
+
+Filing is the console's only write. It requires an explicit action, shows the exact work item first, and `--dry-run` prints the payload without creating anything.
+
 ### Headless
 
 ```powershell
@@ -192,6 +209,7 @@ Content rules regardless of visibility:
 - **No credentials, ever.** The ambient Azure identity is the only credential.
 - Internal endpoints (cluster URIs, library paths, ADO org names) live in
   configuration, not in code, so the repository stays portable and reviewable.
+
 
 
 

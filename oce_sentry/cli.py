@@ -187,6 +187,105 @@ def render_slis(config: Config, tokens: TokenProvider, hours: int = 24) -> int:
     return 0
 
 
+def render_bugs(config: Config, tokens: TokenProvider, show_all: bool = False) -> int:
+    """Headless bug tracker."""
+    from .ado import AdoClient, AdoError, load_board
+
+    client = AdoClient(tokens, timeout=config.query_timeout)
+    board = load_board()
+    try:
+        bugs = client.list_bugs(board)
+    except AdoError as exc:
+        print(f"bugs unavailable: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"board      {board['organization']}/{board['project']} - {board['areaPath']}")
+    print(f"tag        {board['tag']}")
+    print(f"assigned   {board['assignedTo']}")
+    print()
+
+    visible = sorted(
+        [b for b in bugs if show_all or not b.is_terminal],
+        key=lambda b: -(b.idle_days() or 0),
+    )
+    if not visible:
+        print("No open bugs.")
+        return 0
+
+    header = f"{'ID':<9} {'STATE':<10} {'AGE':>6} {'IDLE':>6} {'SOURCE':<9} TITLE"
+    print(header)
+    print("-" * len(header))
+    for bug in visible:
+        age = bug.age_days()
+        idle = bug.idle_days()
+        flag = "  STALLED" if (idle or 0) > 14 and not bug.is_terminal else ""
+        print(
+            f"{bug.id:<9} {bug.state:<10} "
+            f"{(f'{age:.0f}d' if age is not None else '-'):>6} "
+            f"{(f'{idle:.0f}d' if idle is not None else '-'):>6} "
+            f"{('operator' if bug.from_console else 'fleet'):<9} "
+            f"{bug.title[:60]}{flag}"
+        )
+
+    hidden = len(bugs) - len(visible)
+    if hidden:
+        print(f"\n{hidden} closed bug(s) hidden; use --all to include them.")
+    return 0
+
+
+def create_bug_cli(
+    config: Config,
+    tokens: TokenProvider,
+    note: str,
+    category: str = "other",
+    incident_id: str | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Headless bug filing.
+
+    `--dry-run` prints the exact work item that would be created and stops.
+    Given this is the console's only write, it is worth being able to see the
+    payload without producing one.
+    """
+    from .ado import AdoClient, AdoError
+    from .bugs import draft_bug, file_bug
+
+    incident = None
+    if incident_id:
+        client = KustoClient(tokens, timeout=config.query_timeout)
+        result = fetch_incidents(config, client)
+        if not result.ok:
+            print(f"incidents unavailable: {result.error}", file=sys.stderr)
+            return 1
+        incident = next((i for i in result.data if i.incident_id == str(incident_id)), None)
+        if incident is None:
+            print(f"Incident {incident_id} is not in the open in-scope queue.", file=sys.stderr)
+            return 1
+
+    print("drafting ...")
+    draft = draft_bug(note, category, config, incident)
+
+    print()
+    print(f"TITLE: {draft.title}")
+    print()
+    print(draft.body_html)
+    print()
+
+    ado = AdoClient(tokens, timeout=config.query_timeout)
+    try:
+        created = file_bug(draft, ado, dry_run=dry_run)
+    except AdoError as exc:
+        print(f"could not create the work item: {exc}", file=sys.stderr)
+        return 1
+
+    if dry_run:
+        print("DRY RUN - nothing was created.")
+        return 0
+
+    print(f"created {created['id']}: {created['url']}")
+    return 0
+
+
 def run_once_skill(config: Config, tokens: TokenProvider, incident_id: str, skill_id: str) -> int:
     """Headless skill execution.
 

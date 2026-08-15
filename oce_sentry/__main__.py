@@ -53,6 +53,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Trailing window for --slis (default 24).",
     )
     parser.add_argument(
+        "--bugs",
+        action="store_true",
+        help="Show tracked ADO bugs and exit.",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="With --bugs, include closed items.",
+    )
+    parser.add_argument(
+        "--create-bug",
+        metavar="TEXT",
+        help="File a bug from a description. Drafted first, then created.",
+    )
+    parser.add_argument(
+        "--category",
+        default="other",
+        choices=["noise", "tsg", "routing", "process", "other"],
+        help="Category for --create-bug (default other).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --create-bug, show the work item without creating it.",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=50,
@@ -82,6 +108,23 @@ def main(argv: list[str] | None = None) -> int:
     tokens = TokenProvider()
 
     try:
+        if args.bugs:
+            from .cli import render_bugs
+
+            return render_bugs(config, tokens, show_all=args.all)
+
+        if args.create_bug:
+            from .cli import create_bug_cli
+
+            return create_bug_cli(
+                config,
+                tokens,
+                note=args.create_bug,
+                category=args.category,
+                incident_id=args.incident,
+                dry_run=args.dry_run,
+            )
+
         if args.slis:
             from .cli import render_slis
 
@@ -135,4 +178,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

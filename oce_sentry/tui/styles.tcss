@@ -82,3 +82,58 @@ ConfirmRun {
     background: $panel;
     color: $text-muted;
 }
+
+#bug-body {
+    height: 1fr;
+}
+
+#bug-table {
+    height: 1fr;
+}
+
+#bug-detail {
+    height: auto;
+    min-height: 12;
+    padding: 1 2;
+    border-top: solid $panel;
+}
+
+#bug-status {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+}
+
+CreateBugScreen {
+    align: center middle;
+}
+
+#bug-form {
+    width: 100;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: thick $accent;
+    background: $surface;
+}
+
+#bug-note {
+    height: 8;
+    margin: 1 0;
+}
+
+#bug-preview {
+    height: auto;
+    max-height: 30;
+    padding: 1 0;
+}
+
+#bug-form-buttons {
+    height: auto;
+    margin-top: 1;
+}
+
+#bug-form-buttons Button {
+    margin-right: 2;
+}

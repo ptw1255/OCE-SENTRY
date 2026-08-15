@@ -85,6 +85,8 @@ class OceSentryApp(App):
         Binding("bracketright", "next_action", "Next action"),
         Binding("bracketleft", "prev_action", "Prev action"),
         Binding("s", "show_slis", "SLIs"),
+        Binding("b", "show_bugs", "Bugs"),
+        Binding("c", "create_bug", "Create bug"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -272,6 +274,26 @@ class OceSentryApp(App):
 
         self.push_screen(SliScreen(self._config, self._tokens))
 
+    def action_show_bugs(self) -> None:
+        from .bug_screen import BugScreen
+
+        self.push_screen(BugScreen(self._config, self._tokens))
+
+    def action_create_bug(self) -> None:
+        """File a bug about whatever the operator has just hit.
+
+        An incident is context, not a requirement: a TSG or process problem is
+        worth filing whether or not a row happens to be selected.
+        """
+        from .bug_form import CreateBugScreen
+
+        def _done(created: dict | None) -> None:
+            if created:
+                self._log(f"[green]created bug {created['id']}[/green]: {created['title']}")
+                self._log(f"[dim]{created['url']}[/dim]")
+
+        self.push_screen(CreateBugScreen(self._config, self._tokens, self._current_incident()), _done)
+
     def action_open_icm(self) -> None:
         incident = self._current_incident()
         if incident:
@@ -371,5 +393,6 @@ def _escape(text: str) -> str:
 def run_app(config: Config, tokens: TokenProvider) -> int:
     OceSentryApp(config, tokens).run()
     return 0
+
 
 
