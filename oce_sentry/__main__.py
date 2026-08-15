@@ -42,6 +42,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="List discovered skills and exit.",
     )
     parser.add_argument(
+        "--slis",
+        action="store_true",
+        help="Show service level indicators and exit.",
+    )
+    parser.add_argument(
+        "--hours",
+        type=int,
+        default=24,
+        help="Trailing window for --slis (default 24).",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=50,
@@ -71,6 +82,11 @@ def main(argv: list[str] | None = None) -> int:
     tokens = TokenProvider()
 
     try:
+        if args.slis:
+            from .cli import render_slis
+
+            return render_slis(config, tokens, hours=args.hours)
+
         if args.skills:
             from .skills import discover_skills
 

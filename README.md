@@ -111,6 +111,21 @@ All read-only, all optional. PowerShell 7 (`pwsh`) is needed only to *run* a
 kit; without it the queue works and runbook execution reports the missing
 dependency.
 
+### Service level indicators
+
+```powershell
+oce-sentry --slis              # trailing 24h
+oce-sentry --slis --hours 168  # trailing 7d
+```
+
+In the TUI, `s` opens the SLI view: `w` cycles the window (1h → 6h → 24h → 3d → 7d → 30d), `e` and `g` switch the breakdown between environment and region, `r` refreshes.
+
+Two SLIs are registered today — **Analysis Reliability** and **Web Reliability** — read from the Geneva SLI data plane (`genevaslidatafollower.westcentralus` / `slidata`). Sentry reads the windows Geneva already evaluated; it does not recompute reliability from raw telemetry, because a recomputed number would disagree with the one the SLO is actually measured on.
+
+The headline is the **error budget**, not the percentage. An SLI reading 99.89% against a 99.9% objective sounds healthy and is in fact 107% of budget spent — that misreading is what this view exists to prevent.
+
+Adding a third SLI is a config change, not a release: point `OCE_SENTRY_SLI_REGISTRY` at a JSON file of `{id, name, table, objective, description}` entries.
+
 ### Headless
 
 ```powershell
@@ -177,6 +192,7 @@ Content rules regardless of visibility:
 - **No credentials, ever.** The ambient Azure identity is the only credential.
 - Internal endpoints (cluster URIs, library paths, ADO org names) live in
   configuration, not in code, so the repository stays portable and reviewable.
+
 
 
 

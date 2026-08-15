@@ -51,3 +51,34 @@ ConfirmRun {
 #confirm-detail {
     height: auto;
 }
+
+#sli-body {
+    height: 1fr;
+}
+
+#sli-table {
+    height: auto;
+    max-height: 40%;
+}
+
+#sli-detail {
+    height: 1fr;
+    border-top: solid $panel;
+}
+
+#sli-summary {
+    width: 1fr;
+    padding: 1 2;
+}
+
+#sli-breakdown {
+    width: 1fr;
+    border-left: solid $panel;
+}
+
+#sli-status {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+}

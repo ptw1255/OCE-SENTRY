@@ -84,6 +84,7 @@ class OceSentryApp(App):
         Binding("x", "run_action", "Run action"),
         Binding("bracketright", "next_action", "Next action"),
         Binding("bracketleft", "prev_action", "Prev action"),
+        Binding("s", "show_slis", "SLIs"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -261,6 +262,16 @@ class OceSentryApp(App):
             self._selected_action = (self._selected_action - 1) % len(self._candidates)
             self._update_detail()
 
+    def action_show_slis(self) -> None:
+        """Open the SLI view.
+
+        A separate screen because it answers a different question from the
+        queue: not "what is broken" but "is the service meeting its objective".
+        """
+        from .sli_screen import SliScreen
+
+        self.push_screen(SliScreen(self._config, self._tokens))
+
     def action_open_icm(self) -> None:
         incident = self._current_incident()
         if incident:
@@ -360,4 +371,5 @@ def _escape(text: str) -> str:
 def run_app(config: Config, tokens: TokenProvider) -> int:
     OceSentryApp(config, tokens).run()
     return 0
+
 

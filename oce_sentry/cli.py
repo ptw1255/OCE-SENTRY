@@ -123,6 +123,62 @@ def render_actions(config: Config, tokens: TokenProvider, incident_id: str) -> i
     return 0
 
 
+def render_slis(config: Config, tokens: TokenProvider, hours: int = 24) -> int:
+    """Headless SLI report.
+
+    Same parity rule as the incident queue: anything the TUI shows must be
+    reachable from a script or an agent that cannot drive a terminal.
+    """
+    from .sources.slis import fetch_slis
+
+    client = KustoClient(tokens, timeout=config.query_timeout)
+    result = fetch_slis(config, client, hours=hours)
+
+    detail = result.detail
+    print(f"cluster    {detail.get('cluster', '')}/{detail.get('database', '')}")
+    print(f"window     trailing {hours}h")
+    print(f"data       {result.age_label()}")
+    print()
+
+    if not result.data:
+        print(f"slis unavailable: {result.error}", file=sys.stderr)
+        return 1
+
+    header = f"{'SLI':<24} {'VALUE':>11} {'OBJ':>7} {'BUDGET':>8}  {'REQUESTS':>10} {'FAILURES':>10}"
+    print(header)
+    print("-" * len(header))
+
+    over_budget = 0
+    for sli in result.data:
+        if not sli.ok:
+            print(f"{sli.name:<24} {'unavailable':>11}   {sli.error}")
+            continue
+        burn = sli.error_budget_burn
+        if burn is not None and burn > 100:
+            over_budget += 1
+        print(
+            f"{sli.name:<24} {sli.value:>10.4f}% {sli.objective:>6g}% "
+            f"{(f'{burn:.0f}%' if burn is not None else '-'):>8}  "
+            f"{sli.denominator:>10,.0f} {sli.failures:>10,.0f}"
+        )
+
+    for sli in result.data:
+        if not sli.ok or not sli.environments:
+            continue
+        print()
+        print(f"{sli.name} by environment:")
+        for entry in sli.environments:
+            if entry.value is None:
+                continue
+            flag = "  OVER" if entry.value < sli.objective else ""
+            print(f"  {entry.key:<16} {entry.value:>10.4f}%  {entry.denominator:>14,.0f}{flag}")
+
+    if over_budget:
+        print()
+        print(f"{over_budget} SLI(s) over error budget.")
+    return 0
+
+
 def run_once_skill(config: Config, tokens: TokenProvider, incident_id: str, skill_id: str) -> int:
     """Headless skill execution.
 
