@@ -87,6 +87,7 @@ class IncidentScreen(Screen):
         Binding("o", "open_icm", "IcM"),
         Binding("t", "open_tsg", "TSG"),
         Binding("x", "run_action", "Run query"),
+        Binding("d", "open_explorer", "Data Explorer"),
         Binding("s", "show_slis", "SLIs"),
         Binding("k", "show_kits", "Kits"),
         Binding("l", "show_skills", "Skills"),
@@ -305,6 +306,10 @@ class IncidentScreen(Screen):
                 "[dim]no model and no credits. Results feed later skills.[/dim]",
                 f"[dim]{effects}: {_escape(action.id)}[/dim]",
             ]
+            from ..dataexplorer import kit_url
+
+            if kit_url(action.directory):
+                lines.append("[b]d[/b]  open the same query in Data Explorer")
             if action.base_rate:
                 bits = ", ".join(f"{k}={v}" for k, v in action.base_rate.items() if k != "tsg")
                 if bits:
@@ -372,6 +377,24 @@ class IncidentScreen(Screen):
         self.app.push_screen(
             BugScreen(self._config, self._tokens, self._current_incident())
         )
+
+    def action_open_explorer(self) -> None:
+        """Open this monitor's query in Data Explorer without running it here.
+
+        For an operator who would rather read the table in a browser than in a
+        terminal, which for a wide result is the reasonable preference.
+        """
+        from ..dataexplorer import kit_url
+
+        if not self._candidates:
+            self._log("[dim]no investigation query matches this monitor[/dim]")
+            return
+        url = kit_url(self._candidates[0].directory)
+        if url:
+            webbrowser.open(url)
+            self._log("[dim]opened the query in Azure Data Explorer[/dim]")
+        else:
+            self._log("[yellow]this kit does not record which cluster it queries[/yellow]")
 
     def action_open_icm(self) -> None:
         incident = self._current_incident()
@@ -453,6 +476,7 @@ class IncidentScreen(Screen):
         Writing one into the other wrapped every row four times, which is what
         made results unreadable.
         """
+        from ..dataexplorer import kit_url
         from .result_screen import ResultScreen
 
         note = ""
@@ -463,6 +487,9 @@ class IncidentScreen(Screen):
         if run.stderr.strip():
             body = f"{body}\n\n--- stderr ---\n{run.stderr.rstrip()}"
 
+        action = next((a for a in self._candidates if a.id == run.action_id), None)
+        explorer = kit_url(action.directory if action else None, run.incident_id)
+
         self._log(f"[{'green' if run.ok else 'red'}]{run.action_id}: {run.summary()}[/]")
         self.app.push_screen(
             ResultScreen(
@@ -472,6 +499,7 @@ class IncidentScreen(Screen):
                 output_path=run.output_path,
                 ok=run.ok,
                 note=note,
+                explorer_url=explorer,
             )
         )
         if run.stderr.strip():

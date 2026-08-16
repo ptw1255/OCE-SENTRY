@@ -1,11 +1,21 @@
 """The result of running something.
 
 A query kit emits a wide table -- 150 columns is normal for a monitor
-breakdown -- and the queue's side pane is about 35. Writing one into the other
-wrapped every row four times and turned a readable table into noise. Results
-now get the full width of the terminal, and the table is not wrapped at all:
-column alignment is the only thing that makes it readable, and re-flowing it
-destroys exactly that.
+breakdown -- and a terminal pane is about 116. The console still renders it,
+because that output is evidence and feeds later skill runs, but reading a wide
+table here means scrolling in two dimensions. `d` opens the same query in
+Azure Data Explorer, where the operator is already signed in and gets sorting,
+filtering and export for free.
+
+The body is not wrapped: column alignment is the only thing that makes a table
+readable, and re-flowing it destroys exactly that.
+
+There is deliberately no `Header` on this screen. It is pushed from a worker
+thread when a run finishes, and Textual's Header schedules its title
+asynchronously -- if the screen mounts in that window the query for
+`HeaderTitle` raises `NoMatches` and takes the app down. The heading this
+screen needs is the kit name and its summary, which are in the head panel
+already.
 """
 
 from __future__ import annotations
@@ -17,12 +27,13 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Footer, Static
 
 
 class ResultScreen(Screen):
     BINDINGS = [
         Binding("escape,q", "close", "Back"),
+        Binding("d", "open_explorer", "Data Explorer"),
         Binding("o", "open_file", "Open saved file"),
         Binding("f", "open_folder", "Open folder"),
     ]
@@ -35,6 +46,7 @@ class ResultScreen(Screen):
         output_path: Path | None = None,
         ok: bool = True,
         note: str = "",
+        explorer_url: str = "",
     ) -> None:
         super().__init__()
         self._title = title
@@ -43,9 +55,9 @@ class ResultScreen(Screen):
         self._output_path = output_path
         self._ok = ok
         self._note = note
+        self._explorer_url = explorer_url
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
         yield Static("", id="result-head")
         with VerticalScroll(id="result-body"):
             # Markup off: query output is data, and a stray bracket in a
@@ -68,6 +80,11 @@ class ResultScreen(Screen):
                 "[dim]Saved. Skills run against this incident in the next 24h "
                 "will read these rows as evidence.[/dim]"
             )
+        if self._explorer_url:
+            head.append(
+                "[b]d[/b][dim]  open this query in Azure Data Explorer -- sortable, "
+                "filterable, exportable, and you are already signed in.[/dim]"
+            )
         self.query_one("#result-head", Static).update("\n".join(head))
 
         self.query_one("#result-text", Static).update(self._body or "(no output)")
@@ -75,16 +92,25 @@ class ResultScreen(Screen):
         # The exit is named here as well as in the footer. An operator who has
         # just been dropped into a full-screen wall of table output should not
         # have to hunt for the way back.
-        keys = "esc or q  back to the queue"
+        keys = ["esc or q  back"]
+        if self._explorer_url:
+            keys.append("d  Data Explorer")
         if self._output_path is not None:
-            keys += "     o  open the saved file     f  open the folder"
-            self.query_one("#result-status", Static).update(
-                f"{keys}     [dim]{self._output_path}[/dim]"
-            )
-        else:
-            self.query_one("#result-status", Static).update(
-                f"{keys}     [dim]not saved to disk[/dim]"
-            )
+            keys.append("o  open file")
+            keys.append("f  open folder")
+        keys.append("arrows / page up / page down  scroll")
+        suffix = str(self._output_path) if self._output_path else "not saved to disk"
+        self.query_one("#result-status", Static).update(
+            "     ".join(keys) + f"     [dim]{suffix}[/dim]"
+        )
+
+    def on_show(self) -> None:
+        """Focus the body so the arrow keys scroll it without a click."""
+        self.query_one("#result-body", VerticalScroll).focus()
+
+    def action_open_explorer(self) -> None:
+        if self._explorer_url:
+            webbrowser.open(self._explorer_url)
 
     def action_open_file(self) -> None:
         if self._output_path is not None and self._output_path.exists():

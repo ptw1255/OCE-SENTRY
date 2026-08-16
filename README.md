@@ -255,8 +255,13 @@ A **query kit** runs verified KQL directly against Kusto with your own `az login
 
 ```
 x on the queue          run the matching query kit   (real Kusto, ~4s, no credits)
+d on the queue          open the same query in Azure Data Explorer
 l -> x, or k -> x       run a skill or a kit         (reads the rows it produced)
 ```
+
+A result opens full width in the console, and `d` opens the same query in **Azure Data Explorer** — sortable, filterable, exportable, and already signed in as you. A wide table is easier to read in a browser than in a terminal, and this is the same query either way. The link carries the KQL gzipped in the URL; nothing is executed by Sentry and no credentials leave the machine.
+
+Incident-window placeholders are deliberately **not** substituted into the link. The console does not know the window the kit's own runner computes, and filling in a guess would produce a query that looks authoritative and measures a different period.
 
 Verified end to end: a query kit returned 125 rows of monitor breakdown, and the next `outage-pattern` run cited `LSLA013` and its 2,091 incidents from that output.
 
@@ -304,7 +309,7 @@ cannot drive a TUI.
 
 `↑`/`↓` select incident · `x` run the matched action (confirmation shows the
 exact command) · `o` open in IcM · `t` open the TSG · `k` kits · `l` skills ·
-`s` SLIs · `b` bugs · `!` settings · `r` refresh · `q` quit.
+`d` Data Explorer · `s` SLIs · `b` bugs · `!` settings · `r` refresh · `q` quit.
 
 Screen keys stay on their screen: `c` files a bug from the bug tracker, not from
 the queue.
