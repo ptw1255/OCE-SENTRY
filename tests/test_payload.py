@@ -26,6 +26,7 @@ from oce_sentry.payload import (
     payload_path,
     resolve_query,
     resolve_window,
+    trim_base_rate,
 )
 
 NOW = datetime(2026, 8, 16, 1, 0, 0, tzinfo=timezone.utc)
@@ -249,3 +250,80 @@ def test_the_path_is_stable_per_incident(tmp_path):
     assert first == second
     assert first.name == "payload.md"
     assert first.parent.name == "836736526"
+
+
+# ---------------------------------------------------------------- base rates
+
+_CARD = """# [Failed Ping Alert] Unable to reach MEDIA
+
+**Cluster** `4d3a2e` | **action level** signature
+
+## Base rate - what this condition normally does
+
+| Measure | Value |
+|---|---|
+| Firings in window | **8** |
+
+### What the base rate implies for confidence
+
+- Automation closes 12.5% of firings.
+
+## Run the investigation
+
+```powershell
+.\\run.ps1 -IncidentId 848732156
+```
+
+## Recent members
+
+- [848732156](https://portal.microsofticm.com/imp/v3/incidents/details/848732156/home)
+
+## Ownership
+
+Team: SHAREPOINTSNAP\\MeTAWeb
+"""
+
+
+def test_the_card_keeps_its_evidence():
+    trimmed = trim_base_rate(_CARD)
+    assert "Firings in window" in trimmed
+    assert "implies for confidence" in trimmed
+    assert "Recent members" in trimmed
+    assert "Ownership" in trimmed
+
+
+def test_the_card_drops_run_instructions_naming_another_incident():
+    """The card ships a worked example naming whichever incident was current
+    when it was generated. Carried into a payload, that invites an agent to
+    investigate a different incident than the one it was handed.
+    """
+    trimmed = trim_base_rate(_CARD)
+    assert "run.ps1" not in trimmed
+    assert "Run the investigation" not in trimmed
+    # The id survives as evidence under Recent members, which is correct --
+    # what must not survive is the instruction to go and run it.
+    assert ".\\run.ps1 -IncidentId 848732156" not in trimmed
+
+
+def test_an_empty_card_trims_to_nothing():
+    assert trim_base_rate("") == ""
+    assert trim_base_rate("# Heading only\n") == ""
+
+
+def test_the_payload_never_tells_the_agent_to_run_a_kit_script():
+    body = build_payload(
+        _incident(),
+        Selection(queries=[_query(base_rate_card=_CARD)]),
+        window=resolve_window(_incident(), now=NOW),
+    )
+    assert "run.ps1" not in body
+
+
+def test_the_payload_names_the_tool_that_runs_the_query():
+    """"Run the queries" is not actionable without saying how."""
+    body = build_payload(
+        _incident(), Selection(queries=[_query()]), window=resolve_window(_incident(), now=NOW)
+    )
+    assert "kusto_query" in body
+    assert "cluster-uri" in body
+    assert "azure" in body

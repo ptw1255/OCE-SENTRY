@@ -162,6 +162,58 @@ def _fence(body: str, lang: str = "") -> list[str]:
     return [f"```{lang}", body.rstrip(), "```"]
 
 
+#: Sections of a kit's base-rate card that are evidence about the condition.
+#: Everything else in the card is instructions for a human running the kit by
+#: hand -- including a worked `run.ps1 -IncidentId <n>` example naming whichever
+#: incident happened to be current when the card was generated. Carrying that
+#: into a payload invites an agent to investigate a different incident, so the
+#: card is trimmed to its evidence rather than embedded whole.
+_CARD_EVIDENCE = ("## Base rate", "### What the base rate", "## Recent members", "## Ownership")
+_CARD_STOP = ("## Run the investigation", "## How to run", "## Usage")
+
+
+def trim_base_rate(card: str) -> str:
+    """Keep the measured part of a base-rate card, drop the instructions."""
+    if not card.strip():
+        return ""
+    kept: list[str] = []
+    keeping = False
+    for line in card.splitlines():
+        if line.startswith(_CARD_STOP):
+            keeping = False
+            continue
+        if line.startswith(_CARD_EVIDENCE):
+            keeping = True
+        elif line.startswith("## "):
+            keeping = False
+        if keeping:
+            kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def _query_instructions(item: "QueryItem") -> list[str]:
+    """How to actually run this, named rather than left to be inferred.
+
+    The agent has the Azure MCP server; saying which tool and with what
+    arguments is the difference between a query it can run and one it has to
+    work out how to run.
+    """
+    return [
+        "Run it with the `azure` MCP server:",
+        "",
+        "```",
+        "tool:       azure  (kusto)",
+        "command:    kusto_query",
+        f"cluster-uri: {item.cluster}",
+        f"database:    {item.database}",
+        "query:       the KQL above, verbatim",
+        "```",
+        "",
+        f"Or paste it into Azure Data Explorer against `{item.host}`.",
+    ]
+
+
+
 def build_payload(
     incident: Incident,
     selection: Selection,
@@ -243,12 +295,15 @@ def build_payload(
                 "",
             ]
             lines += _fence(item.kql, "kusto")
-            if item.base_rate_card:
+            lines += [""] + _query_instructions(item)
+            trimmed = trim_base_rate(item.base_rate_card)
+            if trimmed:
                 lines += [
                     "",
-                    "<details><summary>Precomputed base rate for this condition</summary>",
+                    "<details><summary>Precomputed base rate for this condition, "
+                    "90 days from IcmDataWarehouse</summary>",
                     "",
-                    item.base_rate_card.rstrip(),
+                    trimmed,
                     "",
                     "</details>",
                 ]
