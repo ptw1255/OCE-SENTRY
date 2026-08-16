@@ -290,9 +290,9 @@ class IncidentScreen(Screen):
         # The full path lives on the compose screen, which has the width for
         # it. Here, in a 35-column pane, an absolute path wraps into noise --
         # what an operator needs from the queue is whether one exists.
-        from ..payload import payload_path
+        from ..manifest import manifest_path
 
-        path = payload_path(incident, self._config)
+        path = manifest_path(incident, self._config)
         state = "[green]written[/green]" if path.is_file() else "[dim]none yet[/dim]"
         lines.append(f"[b]p[/b]  compose a payload for your agent   {state}")
 

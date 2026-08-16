@@ -23,15 +23,9 @@ from textual.widgets import DataTable, Footer, Static
 
 from ..compose import available_queries, available_skills, suggested_skill_ids
 from ..models import Incident
-from ..payload import (
-    Selection,
-    WindowError,
-    build_payload,
-    fingerprint,
-    payload_path,
-    resolve_window,
-    write_payload,
-)
+from ..manifest import manifest_path
+from ..models import utcnow
+from ..payload import Selection, WindowError, fingerprint, resolve_window
 
 
 def copy_to_clipboard(text: str) -> bool:
@@ -78,6 +72,7 @@ class ComposeScreen(Screen):
         self._error = ""
         self._written: Path | None = None
         self._digest = ""
+        self._steps = 0
 
     def compose(self) -> ComposeResult:
         yield Static("", id="cmp-head")
@@ -157,14 +152,14 @@ class ComposeScreen(Screen):
         head.append(f"selected {queries} quer(ies), {skills} skill(s)   [dim]space to change[/dim]")
         self.query_one("#cmp-head", Static).update("\n".join(head))
 
-        self._render_path()
+        self._refresh_path()
         self._render_detail()
 
-    def _render_path(self) -> None:
+    def _refresh_path(self) -> None:
         """The path is the product. Show it whether or not it exists yet."""
-        path = payload_path(self._incident, self._config)
+        path = manifest_path(self._incident, self._config)
         if self._written is not None:
-            state = f"[green]WRITTEN[/green] {self._digest}"
+            state = f"[green]WRITTEN[/green] {self._steps} step(s)  {self._digest}"
         elif path.is_file():
             state = "[yellow]from an earlier build - w to refresh[/yellow]"
         else:
@@ -216,7 +211,7 @@ class ComposeScreen(Screen):
         # The command is shown, not just copyable. An operator who cannot see
         # what v puts on their clipboard has to trust it, and this is the
         # handoff the whole screen exists to produce.
-        path = payload_path(self._incident, self._config)
+        path = manifest_path(self._incident, self._config)
         lines += [
             "",
             "[b]HANDOFF[/b]  [dim]v copies this, c copies just the path[/dim]",
@@ -258,6 +253,7 @@ class ComposeScreen(Screen):
             return
 
         from ..connectors import load_connectors
+        from ..manifest import build_manifest, render, write_manifest
 
         selection = Selection(
             queries=[obj for kind, item_id, _, _, obj in self._rows
@@ -265,18 +261,22 @@ class ComposeScreen(Screen):
             skills=[obj for kind, item_id, _, _, obj in self._rows
                     if kind == "skill" and (kind, item_id) in self._chosen],
         )
-        body = build_payload(
+        manifest = build_manifest(
             self._incident,
             selection,
+            self._config,
             connectors=load_connectors(self._config),
             window=self._window,
+            generated_at=utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
-        self._written = write_payload(self._incident, body, self._config)
+        body = render(manifest)
+        self._written = write_manifest(self._incident, manifest, self._config)
         self._digest = fingerprint(body)
-        self._render_path()
+        self._steps = len(manifest["steps"])
+        self._refresh_path()
 
     def action_copy_path(self) -> None:
-        path = payload_path(self._incident, self._config)
+        path = manifest_path(self._incident, self._config)
         ok = copy_to_clipboard(str(path))
         self._set_path_message(
             "[green]path copied[/green]" if ok else "[red]could not reach the clipboard[/red]"
@@ -284,11 +284,12 @@ class ComposeScreen(Screen):
 
     def action_copy_command(self) -> None:
         """Copy a command that points the operator's agent at the file."""
-        path = payload_path(self._incident, self._config)
+        path = manifest_path(self._incident, self._config)
         command = (
             f'copilot -p "Work IcM incident {self._incident.incident_id}. '
-            f'Read {path} first: it has the incident facts, the queries to run '
-            f'with the window already resolved, and the skills to load."'
+            f'Read {path} first: a JSON manifest with the incident facts, the '
+            f'queries to run with cluster, database and window already resolved, '
+            f'and the skills to load with their file paths. Follow steps in order."'
         )
         ok = copy_to_clipboard(command)
         self._set_path_message(
@@ -296,14 +297,14 @@ class ComposeScreen(Screen):
         )
 
     def action_open_payload(self) -> None:
-        path = payload_path(self._incident, self._config)
+        path = manifest_path(self._incident, self._config)
         if path.is_file():
             webbrowser.open(path.as_uri())
         else:
             self._set_path_message("[yellow]nothing written yet - press w[/yellow]")
 
     def _set_path_message(self, message: str) -> None:
-        path = payload_path(self._incident, self._config)
+        path = manifest_path(self._incident, self._config)
         self.query_one("#cmp-path", Static).update(
             f" POINT YOUR AGENT AT   {path}     {message}"
         )
