@@ -204,6 +204,14 @@ class IncidentScreen(Screen):
         self._last_result = result
         self._incidents = result.data
         self._render_table()
+        self._restore_status(result)
+
+    def _restore_status(self, result: SourceResult) -> None:
+        """The queue's own status line.
+
+        Extracted so a finished run can put it back rather than leaving
+        "running ..." on screen until the next refresh.
+        """
         detail = result.detail
         # "27 open (30 already mitigated)" rather than "57 in scope": an OCE
         # reads the latter as "30 are being hidden from me".
@@ -399,7 +407,9 @@ class IncidentScreen(Screen):
         def _decide(confirmed: bool | None) -> None:
             if confirmed:
                 self._busy = True
+                self._set_running(f"running {action.id} against {incident.incident_id} ...")
                 self._log(f"[b]running[/b] {action.id} against {incident.incident_id} ...")
+                self._log("[dim]querying Kusto; the result opens when it returns[/dim]")
                 self._execute(action, incident)
 
         self.app.push_screen(ConfirmRun(action, incident, command), _decide)
@@ -417,6 +427,24 @@ class IncidentScreen(Screen):
 
     def _clear_busy(self) -> None:
         self._busy = False
+        try:
+            self.query_one("#side").loading = False
+        except Exception:  # noqa: BLE001 - during teardown the widget may be gone
+            pass
+        if self._last_result is not None:
+            self._restore_status(self._last_result)
+
+    def _set_running(self, label: str) -> None:
+        """Visible proof that a keypress did something.
+
+        A Kusto query takes a few seconds, and a console that looks identical
+        while it works is a console an operator presses twice.
+        """
+        self._set_status(label)
+        try:
+            self.query_one("#side").loading = True
+        except Exception:  # noqa: BLE001
+            pass
 
     def _show_run(self, run: ActionRun) -> None:
         """Open the result full width rather than wrapping it into the pane.

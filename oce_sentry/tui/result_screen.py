@@ -59,16 +59,32 @@ class ResultScreen(Screen):
         head = [f"[b]{_escape(self._title)}[/b]", f"[{colour}]{_escape(self._summary)}[/{colour}]"]
         if self._note:
             head.append(f"[yellow]{_escape(self._note)}[/yellow]")
+        # What happens to this output, stated rather than implied. It is
+        # already saved and it already feeds the next skill run; without
+        # saying so the screen reads like a dead end you have to copy out of
+        # by hand.
+        if self._output_path is not None and self._ok:
+            head.append(
+                "[dim]Saved. Skills run against this incident in the next 24h "
+                "will read these rows as evidence.[/dim]"
+            )
         self.query_one("#result-head", Static).update("\n".join(head))
 
         self.query_one("#result-text", Static).update(self._body or "(no output)")
 
+        # The exit is named here as well as in the footer. An operator who has
+        # just been dropped into a full-screen wall of table output should not
+        # have to hunt for the way back.
+        keys = "esc or q  back to the queue"
         if self._output_path is not None:
+            keys += "     o  open the saved file     f  open the folder"
             self.query_one("#result-status", Static).update(
-                f"saved {self._output_path}     o open     f folder"
+                f"{keys}     [dim]{self._output_path}[/dim]"
             )
         else:
-            self.query_one("#result-status", Static).update("not saved to disk")
+            self.query_one("#result-status", Static).update(
+                f"{keys}     [dim]not saved to disk[/dim]"
+            )
 
     def action_open_file(self) -> None:
         if self._output_path is not None and self._output_path.exists():
