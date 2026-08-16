@@ -88,6 +88,13 @@ oce-sentry --once       # one fetch, console dump, exit
 
 That is the whole thing. Prerequisites: Python 3.10+ and Azure CLI signed in.
 
+Everything beyond that is optional and adds to the payload rather than being
+needed to start — see **[docs/SETUP.md](docs/SETUP.md)** for what each checkout
+buys you, measured rather than estimated. With `az login` alone you get the
+queue, the SLI view, the bug tracker, and a payload carrying the incident's
+facts; cloning the ODSP skill repositories adds the skill sequence, and the
+fleet checkout adds resolved investigation queries.
+
 **Sentry is independent of the goobers pipeline.** It needs no daemon, no
 instance directory, no pipeline checkout, and nothing the fleet publishes. The
 queue is a live IcM query, and the scope policy that shapes it ships inside the
