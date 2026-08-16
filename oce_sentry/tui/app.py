@@ -12,6 +12,7 @@ Design notes worth keeping in mind when editing:
 
 from __future__ import annotations
 
+import re
 import webbrowser
 from datetime import datetime, timezone
 
@@ -85,7 +86,7 @@ class IncidentScreen(Screen):
         Binding("r", "refresh", "Refresh"),
         Binding("o", "open_icm", "IcM"),
         Binding("t", "open_tsg", "TSG"),
-        Binding("x", "run_action", "Run"),
+        Binding("x", "run_action", "Run query"),
         Binding("s", "show_slis", "SLIs"),
         Binding("k", "show_kits", "Kits"),
         Binding("l", "show_skills", "Skills"),
@@ -144,8 +145,22 @@ class IncidentScreen(Screen):
         # shift was the wrong trade.
         kits = f"{len(self._kits)} kit(s)" if self._kits else "no kits"
         self._provenance = f"{self._config.policy.label} - {kits}"
+        # Housekeeping on the way in. Pruning ran only on the headless skill
+        # path, so a console left open for weeks accumulated packs and saved
+        # output indefinitely.
+        self._prune_state()
         self.refresh_incidents()
         self.set_interval(self._config.intervals.get("incidents", 300), self.refresh_incidents)
+
+    @work(thread=True, group="housekeeping")
+    def _prune_state(self) -> None:
+        from ..packs import prune_output, prune_packs
+
+        try:
+            prune_packs(self._config)
+            prune_output(self._config)
+        except Exception:  # noqa: BLE001 - housekeeping never blocks the queue
+            pass
 
     # ------------------------------------------------------------------ fetch
 
@@ -267,24 +282,29 @@ class IncidentScreen(Screen):
 
         lines.append("")
         if not self._candidates:
-            lines.append("[dim]No runbook matches this incident.[/dim]")
+            lines.append("[dim]No investigation query matches this monitor.[/dim]")
             if not incident.monitor_id:
-                lines.append("[dim]It carries no monitorId, so kits cannot be matched.[/dim]")
+                lines.append("[dim]It carries no monitorId, so none can be matched.[/dim]")
         else:
-            # x runs the best match. Choosing between several belongs on the
-            # skill browser, which can show what each one does; cycling blind
-            # through them from the queue could not.
-            lines.append("[b]Action[/b]  ( x to run )")
-            for index, action in enumerate(self._candidates):
-                effects = "read-only" if action.read_only else "writes"
-                marker = ">" if index == 0 else " "
-                lines.append(f"{marker} [{action.kind}] {_escape(action.id)}  [dim]{effects}[/dim]")
-                if index == 0 and action.base_rate:
-                    bits = ", ".join(f"{k}={v}" for k, v in action.base_rate.items() if k != "tsg")
-                    if bits:
-                        lines.append(f"    [dim]base rate: {bits}[/dim]")
+            # Say what x does, not just that it exists. The kit id is a
+            # generated slug -- "sev3-alertstorm-244-...-fdeb1e" tells an
+            # operator nothing about whether pressing a key is safe.
+            action = self._candidates[0]
+            effects = "read-only" if action.read_only else "WRITES"
+            lines += [
+                "[b]x[/b]  run the investigation query for this monitor",
+                "[dim]verified KQL, runs locally as you, a few seconds,[/dim]",
+                "[dim]no model and no credits. Results feed later skills.[/dim]",
+                f"[dim]{effects}: {_escape(action.id)}[/dim]",
+            ]
+            if action.base_rate:
+                bits = ", ".join(f"{k}={v}" for k, v in action.base_rate.items() if k != "tsg")
+                if bits:
+                    lines.append(f"[dim]base rate: {bits}[/dim]")
             if len(self._candidates) > 1:
-                lines.append(f"[dim]{len(self._candidates) - 1} more in the skill browser (l)[/dim]")
+                lines.append(
+                    f"[dim]{len(self._candidates) - 1} more query kit(s); see --query-kits[/dim]"
+                )
 
         # Last, because it is the longest thing here and the fields above are
         # what an operator triages on. Plenty of monitor-filed incidents carry
@@ -399,17 +419,33 @@ class IncidentScreen(Screen):
         self._busy = False
 
     def _show_run(self, run: ActionRun) -> None:
-        colour = "green" if run.ok else "red"
-        self._log(f"[{colour}]{run.action_id}: {run.summary()}[/{colour}]")
-        if run.output_path:
-            self._log(f"[dim]saved {run.output_path}[/dim]")
+        """Open the result full width rather than wrapping it into the pane.
+
+        A kit's output is a table 150 columns wide; the side pane is about 35.
+        Writing one into the other wrapped every row four times, which is what
+        made results unreadable.
+        """
+        from .result_screen import ResultScreen
+
+        note = ""
         if run.artifacts:
-            self._log(
-                f"[yellow]the kit also wrote beside itself: {', '.join(run.artifacts)}[/yellow]"
+            note = f"the kit also wrote beside itself: {', '.join(run.artifacts)}"
+
+        body = run.stdout.rstrip() or "(no output)"
+        if run.stderr.strip():
+            body = f"{body}\n\n--- stderr ---\n{run.stderr.rstrip()}"
+
+        self._log(f"[{'green' if run.ok else 'red'}]{run.action_id}: {run.summary()}[/]")
+        self.app.push_screen(
+            ResultScreen(
+                title=run.action_id,
+                summary=f"{run.summary()}  -  {_row_count(run.stdout)}",
+                body=body,
+                output_path=run.output_path,
+                ok=run.ok,
+                note=note,
             )
-        body = run.stdout.strip() or "(no stdout)"
-        for line in body.splitlines()[:60]:
-            self._log(f"  {_escape(line)}")
+        )
         if run.stderr.strip():
             for line in run.stderr.strip().splitlines()[:20]:
                 self._log(f"  [red]{_escape(line)}[/red]")
@@ -462,6 +498,16 @@ def _flag(incident: Incident) -> str:
     if incident.is_stale:
         return "STALE"
     return ""
+
+
+def _row_count(stdout: str) -> str:
+    """The kit states its own row count; surface it in the header.
+
+    "125 row(s)" is the first thing an operator wants from a query result and
+    it would otherwise be six lines down.
+    """
+    match = re.search(r"^(\d+)\s+row\(s\)", stdout or "", re.M)
+    return f"{match.group(1)} rows" if match else "no row count reported"
 
 
 def _escape(text: str) -> str:

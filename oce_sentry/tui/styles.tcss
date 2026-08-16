@@ -284,3 +284,30 @@ CreateBugScreen {
     color: $text-muted;
 }
 
+
+/* Result of a run. The body deliberately does NOT wrap: a query result is a
+   table, column alignment is the only thing that makes it readable, and
+   re-flowing it to the pane width is what made results look choppy. */
+#result-head {
+    height: auto;
+    padding: 1 2;
+    background: $panel;
+}
+
+#result-body {
+    height: 1fr;
+    padding: 1 2;
+    overflow-x: auto;
+    scrollbar-gutter: stable;
+}
+
+#result-text {
+    width: auto;
+}
+
+#result-status {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text-muted;
+}

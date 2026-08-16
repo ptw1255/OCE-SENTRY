@@ -31,6 +31,7 @@ from ..connectors import (
     status_summary,
 )
 from ..copilot import shell_escalation_enabled
+from ..packs import storage_footprint
 from ..dataplanes import (
     BASELINE_ACCESS,
     DataPlane,
@@ -200,10 +201,15 @@ class SettingsScreen(Screen):
             else "[yellow]access from built-in snapshot - no RCA checkout found[/yellow]"
         )
 
+        # An operator asking what this thing stores deserves a number.
+        size, files = storage_footprint(self._config)
+        storage = f"local storage {size / 1024 / 1024:.1f} MB in {files} file(s)"
+
         self.query_one("#set-summary", Static).update(
             f"{headline}\n"
             f"config     {path or 'none found'}\n"
-            f"policy     {self._config.policy.label}     {shell}     {source}"
+            f"policy     {self._config.policy.label}     {shell}     {source}\n"
+            f"storage    {self._config.state_dir}     [dim]{storage}[/dim]"
         )
 
     # --------------------------------------------------------------- probing

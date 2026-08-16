@@ -269,6 +269,12 @@ def build_pack(
     return ContextPack(directory=directory, incident_id=incident.incident_id, files=written)
 
 
+#: Saved run output. Longer than packs because these are the evidence trail
+#: for what an operator did during an incident, and a pack can be rebuilt
+#: from them while the reverse is not true.
+OUTPUT_RETENTION = timedelta(days=30)
+
+
 def prune_packs(config, retention: timedelta = PACK_RETENTION) -> int:
     """Delete old packs.
 
@@ -296,3 +302,66 @@ def prune_packs(config, retention: timedelta = PACK_RETENTION) -> int:
         except OSError:
             pass
     return removed
+
+
+def prune_output(config, retention: timedelta = OUTPUT_RETENTION) -> int:
+    """Delete old saved run output.
+
+    Same reasoning as packs, on a longer clock. Both are pruned when the
+    console starts, so an install left running for months does not quietly
+    accumulate incident data nobody asked it to keep.
+    """
+    root = getattr(config, "output_dir", None)
+    if root is None or not root.is_dir():
+        return 0
+
+    cutoff = (utcnow() - retention).timestamp()
+    removed = 0
+    for incident_dir in root.iterdir():
+        if not incident_dir.is_dir():
+            continue
+        for artefact in incident_dir.iterdir():
+            try:
+                if artefact.is_file() and artefact.stat().st_mtime < cutoff:
+                    artefact.unlink()
+                    removed += 1
+            except OSError:
+                continue
+        try:
+            if not any(incident_dir.iterdir()):
+                incident_dir.rmdir()
+        except OSError:
+            pass
+    return removed
+
+
+def storage_footprint(config) -> tuple[int, int]:
+    """Bytes and file count under the console's state directory.
+
+    Cheap enough to run at startup: this is a few hundred small files, and an
+    operator asking "what is this thing storing" deserves a number rather than
+    a reassurance.
+
+    Paths are de-duplicated because the output directory defaults to a
+    subdirectory of the state directory, and counting it twice would report a
+    footprint roughly double the real one.
+    """
+    roots: list[Path] = []
+    for candidate in (getattr(config, "state_dir", None), getattr(config, "output_dir", None)):
+        if candidate is None or not candidate.is_dir():
+            continue
+        resolved = candidate.resolve()
+        if any(resolved == existing or resolved.is_relative_to(existing) for existing in roots):
+            continue
+        roots.append(resolved)
+
+    total = count = 0
+    for root in roots:
+        for path in root.rglob("*"):
+            try:
+                if path.is_file():
+                    total += path.stat().st_size
+                    count += 1
+            except OSError:
+                continue
+    return total, count

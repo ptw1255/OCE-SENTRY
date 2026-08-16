@@ -18,6 +18,8 @@ from oce_sentry.packs import (
     MAX_KIT_RESULTS,
     build_pack,
     load_kit_results,
+    prune_output,
+    storage_footprint,
 )
 
 
@@ -63,7 +65,11 @@ def _persist_result(
         when = (datetime.now(timezone.utc) - age).timestamp()
         import os
 
+        # Both files are written together by actions._persist, so they age
+        # together. Ageing only one produced an orphaned sidecar that no real
+        # run can create.
         os.utime(stdout, (when, when))
+        os.utime(target / f"{stem}.json", (when, when))
     return stdout
 
 
@@ -202,3 +208,45 @@ def test_a_fresh_run_is_not_duplicated_by_the_disk_copy(tmp_path):
     carried = [f for f in pack.files if f.startswith("kit-results/")]
     assert len(carried) == 1
     assert "fresh rows" in (pack.directory / carried[0]).read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------------ storage
+
+
+def test_footprint_does_not_double_count_nested_output(tmp_path):
+    """output_dir defaults to a subdirectory of state_dir.
+
+    Counting both roots naively reported roughly twice the real footprint,
+    which is exactly the number an operator would act on.
+    """
+    config = _Config(tmp_path)
+    config.output_dir = config.state_dir / "output"
+    (config.state_dir / "output" / "850000001").mkdir(parents=True)
+    (config.state_dir / "output" / "850000001" / "a.txt").write_text(
+        "x" * 1000, encoding="utf-8"
+    )
+    size, count = storage_footprint(config)
+    assert count == 1
+    assert size == 1000
+
+
+def test_footprint_is_zero_before_anything_runs(tmp_path):
+    assert storage_footprint(_Config(tmp_path)) == (0, 0)
+
+
+def test_old_output_is_pruned(tmp_path):
+    config = _Config(tmp_path)
+    _persist_result(config, "850000001", "old", age=timedelta(days=60))
+    assert prune_output(config) > 0
+    assert not (config.output_dir / "850000001").exists()
+
+
+def test_recent_output_is_kept(tmp_path):
+    config = _Config(tmp_path)
+    _persist_result(config, "850000001", "recent")
+    assert prune_output(config) == 0
+    assert (config.output_dir / "850000001").is_dir()
+
+
+def test_pruning_a_missing_directory_is_not_fatal(tmp_path):
+    assert prune_output(_Config(tmp_path)) == 0
