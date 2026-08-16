@@ -12,7 +12,15 @@ winget install Microsoft.AzureCLI          # if you do not have it
 az login
 
 pip install git+https://github.com/parkerwall_microsoft/oce-sentry.git
+oce-sentry --bootstrap                     # what is missing, and the exact fix
 oce-sentry
+```
+
+`--bootstrap` prints the machine's current state and the remaining steps as
+JSON, with the real paths filled in. It is written for an agent to act on:
+
+```powershell
+oce-sentry --bootstrap | copilot -p "Set up OCE Sentry by following this."
 ```
 
 That gets you the incident queue, the SLI view, the bug tracker, and a payload
@@ -113,6 +121,32 @@ section, not a plausible-looking guess.
   are not launched by Sentry.
 - **Any PAT or secret.** There is no configuration file with credentials in it,
   and nothing is written outside `%LOCALAPPDATA%\oce-sentry`.
+
+---
+
+## Skills carry their origin
+
+Every skill in a payload records where it came from, not just where it is:
+
+```json
+"origin": {
+  "url": "https://dev.azure.com/onedrive/SPARC/_git/SRELivesite-RCAAgent",
+  "branch": "main",
+  "commit": "a8e2ee2",
+  "pathInRepo": "services/spo/sre/skills/icm/SKILL.md",
+  "webUrl": "https://dev.azure.com/.../SRELivesite-RCAAgent?path=/..."
+}
+```
+
+The absolute path is correct on the machine that built the manifest and
+meaningless anywhere else. The origin is what keeps the payload actionable when
+the file is not there — an agent reading a path that does not resolve has the
+repository, the branch, the commit it was read at, and the path within it.
+
+`access.skillRepositories` lists one entry per repository with a clone command.
+That command uses `$(az account get-access-token ...)` rather than a token: a
+manifest is written to disk and handed to something else, and embedding a live
+credential in it would be the wrong thing to do quietly.
 
 ---
 

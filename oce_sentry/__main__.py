@@ -68,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show the fleet's Kusto investigation kit inventory and exit.",
     )
     parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="Print setup steps as JSON, for an agent or an operator to act on.",
+    )
+    parser.add_argument(
         "--connectors",
         action="store_true",
         help="Show MCP connectors and whether they can start, then exit.",
@@ -145,6 +150,11 @@ def main(argv: list[str] | None = None) -> int:
             from .cli import run_kit_cli
 
             return run_kit_cli(config, tokens, args.kit, args.incident)
+
+        if args.bootstrap:
+            from .cli import render_bootstrap
+
+            return render_bootstrap(config)
 
         if args.connectors:
             from .cli import render_connectors

@@ -7,7 +7,9 @@ tell whether the data layer works, which is why it is built before the TUI.
 
 from __future__ import annotations
 
+import os
 import sys
+from pathlib import Path
 
 from .actions import actions_for, discover_kits, run_action
 from .auth import AuthError, TokenProvider
@@ -315,6 +317,89 @@ def render_query_kits(config: Config) -> int:
             f"{action.id[:48]:<48} {(action.monitor_id or '-')[:34]:<34} "
             f"{('ok' if complete else 'incomplete'):<11} {lines}L"
         )
+    return 0
+
+
+def render_bootstrap(config: Config) -> int:
+    """Emit setup instructions an agent can act on.
+
+    Written for a machine to read: what is already present, what is missing,
+    and the exact command for each gap. An operator can follow it too, but the
+    intended reader is the agent they hand it to, which is why it states the
+    current state rather than assuming a blank machine.
+    """
+    import json as _json
+
+    from .origin import ADO_RESOURCE, KNOWN_REPOS, clone_instructions
+    from .skills import discover_skills, skill_sources
+
+    present: list[str] = []
+    missing: list[str] = []
+    for name in KNOWN_REPOS:
+        root = Path.home() / "repos" / name
+        (present if root.is_dir() else missing).append(name)
+
+    skills = [s for s in discover_skills(config) if s.ok]
+    configured = [str(path) for path, _ in skill_sources(config)]
+
+    expected: list[str] = []
+    for name, spec in KNOWN_REPOS.items():
+        for relative in spec["skillPaths"]:
+            expected.append(str(Path.home() / "repos" / name / relative.replace("/", os.sep)))
+
+    report = {
+        "tool": "oce-sentry",
+        "state": {
+            "skillsDiscovered": len(skills),
+            "skillSourcesConfigured": configured,
+            "repositoriesPresent": present,
+            "repositoriesMissing": missing,
+        },
+        "required": [
+            {"what": "Azure CLI signed in", "check": "az account show", "fix": "az login"},
+        ],
+        "steps": [],
+    }
+
+    if missing:
+        report["steps"].append(
+            {
+                "id": "clone-skill-repositories",
+                "why": "Skills are read from these checkouts; without them a payload has no sequence.",
+                "workingDirectory": str(Path.home() / "repos"),
+                "commands": [c["clone"] for c in clone_instructions(missing)],
+                "note": (
+                    "Azure DevOps requires a bearer token from the Azure CLI; "
+                    f"the resource id is {ADO_RESOURCE}."
+                ),
+            }
+        )
+
+    if not configured or len(skills) == 0:
+        joined = os.pathsep.join(expected)
+        report["steps"].append(
+            {
+                "id": "set-skill-path",
+                "why": "OCE_SENTRY_SKILLS is the only variable Sentry cannot discover.",
+                "commands": [
+                    "[Environment]::SetEnvironmentVariable("
+                    f"'OCE_SENTRY_SKILLS', '{joined}', 'User')"
+                ],
+                "note": (
+                    "A User-scope variable does not reach a shell that was already "
+                    "open. Start a new terminal afterwards."
+                ),
+            }
+        )
+
+    report["verify"] = ["oce-sentry --skills", "oce-sentry --connectors", "oce-sentry --once"]
+
+    if not report["steps"]:
+        report["steps"].append(
+            {"id": "none", "why": "Everything Sentry can discover is already in place."}
+        )
+
+    print(_json.dumps(report, indent=2))
     return 0
 
 

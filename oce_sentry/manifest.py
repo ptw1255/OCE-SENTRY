@@ -146,8 +146,17 @@ def _data_source(item, explorer_url: str | None) -> dict[str, Any]:
 
 
 def _sequence_entry(order: int, item) -> dict[str, Any]:
-    """One skill to run, in the operator's order."""
-    return {
+    """One skill to run, in the operator's order.
+
+    Carries both the local path and the Azure DevOps origin. The path is
+    correct on the machine that built the manifest and meaningless on any
+    other; the origin is what makes the entry actionable when the file is not
+    there.
+    """
+    from .origin import origin_of
+
+    origin = origin_of(item.directory)
+    entry: dict[str, Any] = {
         "order": order,
         "skillId": item.skill_id,
         "path": str(item.instruction_path),
@@ -155,6 +164,17 @@ def _sequence_entry(order: int, item) -> dict[str, Any]:
         "repo": item.source_repo or None,
         "description": item.description or None,
     }
+    if origin.known:
+        entry["origin"] = {
+            "url": origin.url,
+            "branch": origin.branch or None,
+            "commit": origin.commit or None,
+            "pathInRepo": f"{origin.path}/SKILL.md" if origin.path else None,
+            "webUrl": origin.web_url or None,
+        }
+    else:
+        entry["origin"] = None
+    return entry
 
 
 def build_manifest(
@@ -214,6 +234,10 @@ def build_manifest(
             "clusters": clusters,
             "queries": sources,
             "skillRoots": sorted({str(item.directory.parent) for item in selection.skills}),
+            #: How to obtain a skill repository whose path does not resolve on
+            #: the machine reading this. Present unconditionally: a manifest is
+            #: often read somewhere other than where it was written.
+            "skillRepositories": _skill_repositories(selection),
         },
         "sequence": [
             _sequence_entry(index, item)
@@ -224,6 +248,34 @@ def build_manifest(
             "report": str(directory / "report.md"),
         },
     }
+
+
+def _skill_repositories(selection: Selection) -> list[dict[str, Any]]:
+    """The repositories the selected skills came from, with how to clone them.
+
+    One entry per repository rather than per skill: a manifest naming twelve
+    skills from two checkouts should describe two clones.
+    """
+    from .origin import KNOWN_REPOS, clone_instructions, origin_of
+
+    seen: dict[str, dict[str, Any]] = {}
+    for item in selection.skills:
+        origin = origin_of(item.directory)
+        if not origin.known or origin.repo in seen:
+            continue
+        clone = next(
+            (c["clone"] for c in clone_instructions([origin.repo])),
+            None,
+        )
+        seen[origin.repo] = {
+            "repo": origin.repo,
+            "url": origin.url,
+            "branch": origin.branch or None,
+            "commit": origin.commit or None,
+            "clone": clone,
+            "skillPaths": KNOWN_REPOS.get(origin.repo, {}).get("skillPaths"),
+        }
+    return list(seen.values())
 
 
 def _access(cluster: str) -> dict[str, Any]:
