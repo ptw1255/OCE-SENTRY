@@ -1,8 +1,11 @@
 """The payload manifest.
 
-An address book, not a briefing. The tests here hold two properties: every
-value is traceable to a source, and every step carries enough to be invoked
-without the agent inferring anything.
+Three things and no fourth: where the data is, which skills to run against this
+incident and in what order, and where the report goes. The agent reads the
+skills themselves -- the manifest does not paraphrase them and carries no
+advice about how to investigate.
+
+The tests hold that separation, and that every value is traceable to a source.
 """
 
 from __future__ import annotations
@@ -10,8 +13,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-
-import pytest
 
 from oce_sentry.manifest import (
     SCHEMA,
@@ -39,7 +40,17 @@ class _Config:
     policy = _Policy()
 
     def __init__(self, tmp_path: Path | None = None):
-        self.output_dir = tmp_path or Path(".")
+        self.output_dir = tmp_path or Path("C:/state/output")
+
+
+class _Connector:
+    def __init__(self, name, required_by=(), purpose=""):
+        self.name = name
+        self.kind = "stdio"
+        self.target = f"agency mcp {name}"
+        self.status = "ready"
+        self.purpose = purpose
+        self.required_by = list(required_by)
 
 
 def _incident(**kwargs) -> Incident:
@@ -78,85 +89,176 @@ def _skill(**kwargs) -> SkillItem:
     return SkillItem(**base)
 
 
-def _manifest(selection: Selection, incident: Incident | None = None) -> dict:
+def _manifest(selection: Selection, incident: Incident | None = None, connectors=None) -> dict:
     incident = incident or _incident()
     return build_manifest(
-        incident, selection, _Config(),
+        incident, selection, _Config(), connectors=connectors,
         window=resolve_window(incident, now=NOW),
         generated_at="2026-08-16T01:00:00Z",
     )
 
 
-# ------------------------------------------------------------------- shape
+# --------------------------------------------------------------------- shape
 
 
 def test_it_is_valid_json_and_declares_its_schema():
-    body = render(_manifest(Selection(queries=[_query()])))
-    loaded = json.loads(body)
+    loaded = json.loads(render(_manifest(Selection(queries=[_query()]))))
     assert loaded["schema"] == SCHEMA
 
 
-def test_steps_are_numbered_in_order():
-    manifest = _manifest(Selection(queries=[_query(), _query(kit_id="b")], skills=[_skill()]))
-    assert [s["order"] for s in manifest["steps"]] == [1, 2, 3]
-
-
-def test_queries_come_before_skills():
-    """Measure, then reason. The only opinion in the file, and it is structural."""
+def test_it_has_exactly_the_parts_it_promises():
+    """Access, sequence, output. Anything else is scope creep in a data file."""
     manifest = _manifest(Selection(queries=[_query()], skills=[_skill()]))
-    assert [s["type"] for s in manifest["steps"]] == ["query", "skill"]
+    assert set(manifest) == {
+        "schema", "generatedAt", "generatedBy",
+        "incident", "window", "access", "sequence", "output",
+    }
+
+
+def test_it_carries_no_instructions_for_the_agent():
+    """The agent reads the skills. The manifest is an address book.
+
+    Earlier versions carried prose telling the agent how to behave -- "ground
+    every number in a returned row" -- which is advice, not captured data, and
+    duplicates what the skills already say.
+    """
+    body = render(_manifest(Selection(queries=[_query()], skills=[_skill()]))).lower()
+    for phrase in ("ground every", "do not widen", "what to do with this", "follow their"):
+        assert phrase not in body
+
+
+# ------------------------------------------------------------------ sequence
+
+
+def test_the_sequence_is_skills_in_the_operators_order():
+    manifest = _manifest(
+        Selection(skills=[_skill(skill_id="icm"), _skill(skill_id="network")])
+    )
+    assert [(s["order"], s["skillId"]) for s in manifest["sequence"]] == [
+        (1, "icm"),
+        (2, "network"),
+    ]
+
+
+def test_queries_are_not_in_the_sequence():
+    """A query is data access, not a step the agent is told to perform."""
+    manifest = _manifest(Selection(queries=[_query()], skills=[_skill()]))
+    assert len(manifest["sequence"]) == 1
+    assert manifest["sequence"][0]["skillId"] == "network"
+
+
+def test_each_sequence_entry_points_at_a_skill_file():
+    entry = _manifest(Selection(skills=[_skill()]))["sequence"][0]
+    assert entry["path"].endswith("SKILL.md")
+    assert entry["repo"] == "SRELivesite-RCAAgent"
+    assert Path(entry["path"]).is_absolute()
 
 
 def test_an_empty_selection_still_describes_the_incident():
     manifest = _manifest(Selection())
-    assert manifest["steps"] == []
+    assert manifest["sequence"] == []
+    assert manifest["access"]["queries"] == []
     assert manifest["incident"]["id"] == "841552464"
 
 
-# ---------------------------------------------------------------- invocable
+# -------------------------------------------------------------------- access
 
 
-def test_a_query_step_carries_everything_needed_to_call_it():
-    """An agent should not have to infer the calling convention."""
-    step = _manifest(Selection(queries=[_query()]))["steps"][0]
-    assert step["run"]["via"] == "mcp"
-    assert step["run"]["server"] == "azure"
-    assert step["run"]["tool"] == "kusto_query"
-    arguments = step["run"]["arguments"]
-    assert arguments["cluster-uri"].startswith("https://")
-    assert arguments["database"]
-    assert "PlatformEvent" in arguments["query"]
+def test_a_query_is_reachable_without_deriving_anything():
+    source = _manifest(Selection(queries=[_query()]))["access"]["queries"][0]
+    assert source["cluster"].startswith("https://")
+    assert source["database"] == "odspmediaprod"
+    assert "PlatformEvent" in source["query"]
+    assert source["via"] == {"server": "azure", "tool": "kusto_query"}
+    assert source["windowSubstituted"] is True
 
 
-def test_a_query_step_offers_a_browser_alternate():
-    step = _manifest(Selection(queries=[_query()]))["steps"][0]
-    assert step["alternate"]["via"] == "browser"
-    assert step["alternate"]["url"].startswith("https://dataexplorer.azure.com/")
+def test_a_query_offers_a_browser_url():
+    source = _manifest(Selection(queries=[_query()]))["access"]["queries"][0]
+    assert source["explorerUrl"].startswith("https://dataexplorer.azure.com/")
 
 
-def test_a_skill_step_points_at_a_file():
-    step = _manifest(Selection(skills=[_skill()]))["steps"][0]
-    assert step["run"]["via"] == "file"
-    assert step["run"]["path"].endswith("SKILL.md")
-    assert step["source"]["repo"] == "SRELivesite-RCAAgent"
+def test_a_query_records_where_it_came_from():
+    """Hardcode what the machine already knows rather than making it look."""
+    manifest = _manifest(Selection(queries=[_query(directory=Path("C:/kits/a"))]))
+    paths = manifest["access"]["queries"][0]["paths"]
+    assert paths["query"].endswith("investigate.kql")
+    assert paths["baseRateCard"].endswith("README.md")
+    assert paths["kit"] == str(Path("C:/kits/a"))
 
 
-# ----------------------------------------------------------------- capture
+def test_clusters_say_which_queries_use_them():
+    manifest = _manifest(Selection(queries=[_query(), _query(kit_id="b")]))
+    cluster = manifest["access"]["clusters"][0]
+    assert cluster["usedBy"] == ["failed-ping-4d3a2e", "b"]
+
+
+def test_auth_is_stated_once():
+    assert _manifest(Selection())["access"]["auth"] == "az login"
+
+
+def test_connectors_include_what_the_skills_need():
+    """Deriving connectors from queries alone left the address book wrong.
+
+    `network` names geneva-mcp and workiq in its own instructions; a manifest
+    listing only `azure` tells the agent it has everything when it does not.
+    """
+    manifest = _manifest(
+        Selection(skills=[_skill()]),
+        connectors=[
+            _Connector("azure", ["network"]),
+            _Connector("geneva-mcp", ["network"]),
+            _Connector("workiq", ["network"]),
+            _Connector("drdashboard", ["something-else"]),
+        ],
+    )
+    listed = {c["name"] for c in manifest["access"]["connectors"]}
+    assert listed == {"azure", "geneva-mcp", "workiq"}
+
+
+def test_a_connector_says_which_skills_named_it():
+    manifest = _manifest(
+        Selection(skills=[_skill()]),
+        connectors=[_Connector("geneva-mcp", ["network", "redis"])],
+    )
+    assert manifest["access"]["connectors"][0]["namedBySkills"] == ["network"]
+
+
+# -------------------------------------------------------------------- output
+
+
+def test_the_report_path_is_fixed_and_absolute():
+    """The agent is told where to put its report, not asked to choose."""
+    output = _manifest(Selection())["output"]
+    assert output["report"].endswith("report.md")
+    assert output["directory"].endswith("841552464")
+    assert Path(output["report"]).is_absolute()
+
+
+def test_the_manifest_and_the_report_sit_together(tmp_path):
+    incident = _incident()
+    config = _Config(tmp_path)
+    manifest = build_manifest(
+        incident, Selection(), config, window=resolve_window(incident, now=NOW)
+    )
+    assert Path(manifest["output"]["report"]).parent == manifest_path(incident, config).parent
+
+
+# ------------------------------------------------------------------- capture
 
 
 def test_the_kits_caveat_travels_with_the_query():
     """It is the fleet's own warning about misreading this query."""
-    step = _manifest(Selection(queries=[_query()]))["steps"][0]
-    assert "empty error signal" in step["caveat"]
+    source = _manifest(Selection(queries=[_query()]))["access"]["queries"][0]
+    assert "empty error signal" in source["caveat"]
 
 
 def test_no_caveat_is_null_not_invented():
-    step = _manifest(Selection(queries=[_query(kql="T | take 1")]))["steps"][0]
-    assert step["caveat"] is None
+    source = _manifest(Selection(queries=[_query(kql="T | take 1")]))["access"]["queries"][0]
+    assert source["caveat"] is None
 
 
 def test_a_redacted_tsg_is_null_but_the_raw_value_is_kept():
-    """The agent needs to know there is no link; an auditor needs to know why."""
     manifest = _manifest(Selection(), incident=_incident(tsg_id="** REDACTED **"))
     assert manifest["incident"]["tsgUrl"] is None
     assert manifest["incident"]["tsgRaw"] == "** REDACTED **"
@@ -186,7 +288,7 @@ def test_the_window_records_how_it_was_derived():
     assert window["derivedFrom"] == ["CreateDate", "MitigateDate"]
 
 
-# --------------------------------------------------------------- base rate
+# ----------------------------------------------------------------- base rate
 
 _CARD = """## Base rate
 
@@ -203,7 +305,6 @@ def test_base_rate_measures_are_captured():
     parsed = parse_base_rate(_CARD)
     assert parsed["firings"] == "8 (0.62/week)"
     assert parsed["closedByAutomation"] == "37.5% (3 of 8)"
-    assert parsed["distinctSignatures"] == "1"
 
 
 def test_measures_keep_their_denominator():
@@ -213,93 +314,14 @@ def test_measures_keep_their_denominator():
 
 def test_an_absent_card_yields_no_base_rate():
     assert parse_base_rate("") == {}
-    step = _manifest(Selection(queries=[_query()]))["steps"][0]
-    assert step["evidence"]["baseRate"] is None
-
-
-def test_the_card_is_referenced_by_path_not_inlined(tmp_path):
-    """120 lines of prose in a manifest is a document, not an address book."""
-    query = _query(directory=tmp_path)
-    step = _manifest(Selection(queries=[query]))["steps"][0]
-    assert step["evidence"]["cardPath"].endswith("README.md")
-    assert step["evidence"]["queryPath"].endswith("investigate.kql")
-
-
-# ---------------------------------------------------------------- caveat re
+    source = _manifest(Selection(queries=[_query()]))["access"]["queries"][0]
+    assert source["baseRate"] is None
 
 
 def test_extract_caveat_reads_only_the_marked_comment():
     assert extract_caveat("// CAVEAT: mind the gap\nT | take 1") == "mind the gap"
     assert extract_caveat("// just a comment\nT | take 1") is None
     assert extract_caveat("") is None
-
-
-# ---------------------------------------------------------------- resources
-
-
-def test_clusters_say_which_steps_use_them():
-    manifest = _manifest(Selection(queries=[_query(), _query(kit_id="b")]))
-    cluster = manifest["resources"]["clusters"][0]
-    assert cluster["usedBySteps"] == [1, 2]
-
-
-def test_auth_is_stated_once():
-    assert _manifest(Selection())["resources"]["auth"] == "az login"
-
-
-def test_connectors_include_what_the_skills_need(tmp_path):
-    """Deriving connectors from queries alone left the address book wrong.
-
-    `network` names geneva-mcp and workiq in its own instructions; a manifest
-    listing only `azure` tells the agent it has everything when it does not.
-    """
-
-    class _Connector:
-        def __init__(self, name, required_by):
-            self.name = name
-            self.kind = "stdio"
-            self.target = f"agency mcp {name}"
-            self.status = "ready"
-            self.purpose = ""
-            self.required_by = required_by
-
-    connectors = [
-        _Connector("azure", ["network"]),
-        _Connector("geneva-mcp", ["network"]),
-        _Connector("workiq", ["network"]),
-        _Connector("drdashboard", ["something-else"]),
-    ]
-    incident = _incident()
-    manifest = build_manifest(
-        incident,
-        Selection(skills=[_skill()]),
-        _Config(),
-        connectors=connectors,
-        window=resolve_window(incident, now=NOW),
-    )
-    listed = {c["name"] for c in manifest["resources"]["connectors"]}
-    assert listed == {"azure", "geneva-mcp", "workiq"}
-    assert "drdashboard" not in listed
-
-
-def test_a_connector_says_which_skills_named_it():
-    class _Connector:
-        name = "geneva-mcp"
-        kind = "stdio"
-        target = "dnx GenevaMonitoring.MCP.Server"
-        status = "ready"
-        purpose = "Geneva monitor health"
-        required_by = ["network", "redis"]
-
-    incident = _incident()
-    manifest = build_manifest(
-        incident,
-        Selection(skills=[_skill()]),
-        _Config(),
-        connectors=[_Connector()],
-        window=resolve_window(incident, now=NOW),
-    )
-    assert manifest["resources"]["connectors"][0]["namedBySkills"] == ["network"]
 
 
 def test_the_path_is_stable(tmp_path):

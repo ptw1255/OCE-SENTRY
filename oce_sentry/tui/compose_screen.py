@@ -279,7 +279,7 @@ class ComposeScreen(Screen):
         body = render(manifest)
         self._written = write_manifest(self._incident, manifest, self._config)
         self._digest = fingerprint(body)
-        self._steps = len(manifest["steps"])
+        self._steps = len(manifest["sequence"])
         self._refresh_path()
 
     def action_copy_path(self) -> None:

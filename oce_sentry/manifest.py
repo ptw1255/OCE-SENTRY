@@ -22,7 +22,7 @@ from typing import Any
 from .models import Incident
 from .payload import Selection, resolve_window
 
-SCHEMA = "oce-sentry/payload@1"
+SCHEMA = "oce-sentry/payload@2"
 
 #: The base-rate card is a markdown table of measures. Parsing it means the
 #: manifest can carry the numbers themselves rather than 120 lines of prose an
@@ -117,48 +117,43 @@ def _incident_block(incident: Incident, config) -> dict[str, Any]:
     }
 
 
-def _query_step(order: int, item, explorer_url: str | None) -> dict[str, Any]:
-    step: dict[str, Any] = {
-        "order": order,
-        "type": "query",
+def _data_source(item, explorer_url: str | None) -> dict[str, Any]:
+    """One pre-resolved way to reach data about this incident.
+
+    Not a step and not an instruction. The agent reads the skills and decides
+    what it needs; this says where the data is and how to reach it, with the
+    cluster, database and window already filled in so nothing has to be
+    derived at read time.
+    """
+    source: dict[str, Any] = {
         "id": item.kit_id,
-        "run": {
-            "via": "mcp",
-            "server": "azure",
-            "tool": "kusto_query",
-            "arguments": {
-                "cluster-uri": item.cluster,
-                "database": item.database,
-                "query": item.kql,
-            },
-        },
+        "cluster": item.cluster,
+        "database": item.database,
+        "query": item.kql,
         "windowSubstituted": True,
+        "via": {"server": "azure", "tool": "kusto_query"},
         "caveat": extract_caveat(item.kql),
-        "evidence": {
-            "baseRate": parse_base_rate(item.base_rate_card) or None,
-            "cardPath": str(item.directory / "README.md") if item.directory else None,
-            "queryPath": str(item.directory / "investigate.kql") if item.directory else None,
+        "baseRate": parse_base_rate(item.base_rate_card) or None,
+        "paths": {
+            "query": str(item.directory / "investigate.kql") if item.directory else None,
+            "baseRateCard": str(item.directory / "README.md") if item.directory else None,
+            "kit": str(item.directory) if item.directory else None,
         },
     }
     if explorer_url:
-        step["alternate"] = {"via": "browser", "url": explorer_url}
-    return step
+        source["explorerUrl"] = explorer_url
+    return source
 
 
-def _skill_step(order: int, item) -> dict[str, Any]:
+def _sequence_entry(order: int, item) -> dict[str, Any]:
+    """One skill to run, in the operator's order."""
     return {
         "order": order,
-        "type": "skill",
-        "id": item.skill_id,
-        "run": {
-            "via": "file",
-            "path": str(item.instruction_path),
-        },
+        "skillId": item.skill_id,
+        "path": str(item.instruction_path),
+        "directory": str(item.directory),
+        "repo": item.source_repo or None,
         "description": item.description or None,
-        "source": {
-            "repo": item.source_repo or None,
-            "directory": str(item.directory),
-        },
     }
 
 
@@ -172,44 +167,37 @@ def build_manifest(
 ) -> dict[str, Any]:
     """The manifest, as a plain dict.
 
-    Steps are ordered: queries first, then skills, each in the order the
-    operator selected them. The order is the operator's sequence, not a
-    recommendation -- measure before reasoning is the only opinion here, and it
-    is structural rather than analytical.
+    Three parts, and nothing else: where the data is, which skills to run
+    against this incident and in what order, and where the report goes. The
+    agent reads the skills themselves -- this file does not paraphrase them and
+    carries no advice about how to investigate.
+
+    Paths are absolute throughout. Anything the operator's machine already
+    knows is written down rather than left for the agent to locate.
     """
     from .dataexplorer import build_url
 
     start, end, derivation = window or resolve_window(incident)
 
-    steps: list[dict[str, Any]] = []
-    for item in selection.queries:
-        steps.append(
-            _query_step(
-                len(steps) + 1,
-                item,
-                build_url(item.cluster, item.database, item.kql),
-            )
-        )
-    for item in selection.skills:
-        steps.append(_skill_step(len(steps) + 1, item))
+    sources = [
+        _data_source(item, build_url(item.cluster, item.database, item.kql))
+        for item in selection.queries
+    ]
 
     clusters = []
     for cluster, database in sorted({(q.cluster, q.database) for q in selection.queries}):
-        used_by = [s["order"] for s in steps
-                   if s["type"] == "query"
-                   and s["run"]["arguments"]["cluster-uri"] == cluster
-                   and s["run"]["arguments"]["database"] == database]
+        used_by = [s["id"] for s in sources
+                   if s["cluster"] == cluster and s["database"] == database]
         clusters.append(
-            {"uri": cluster, "database": database, "usedBySteps": used_by, **_access(cluster)}
+            {"uri": cluster, "database": database, "usedBy": used_by, **_access(cluster)}
         )
+
+    directory = config.output_dir / incident.incident_id
 
     return {
         "schema": SCHEMA,
         "generatedAt": generated_at,
-        "note": (
-            "Every value is copied from IcM or from a file on disk. "
-            "Nothing here was inferred or generated."
-        ),
+        "generatedBy": "oce-sentry",
         "incident": _incident_block(incident, config),
         "window": {
             "start": start,
@@ -217,17 +205,23 @@ def build_manifest(
             "derivation": derivation,
             "derivedFrom": ["CreateDate", "MitigateDate"],
         },
-        "steps": steps,
-        "resources": {
-            "clusters": clusters,
+        "access": {
+            "auth": "az login",
             "connectors": [
                 _connector_block(c, selection)
                 for c in _needed_connectors(selection, connectors or [])
             ],
-            "skillRoots": sorted(
-                {str(item.directory.parent) for item in selection.skills}
-            ),
-            "auth": "az login",
+            "clusters": clusters,
+            "queries": sources,
+            "skillRoots": sorted({str(item.directory.parent) for item in selection.skills}),
+        },
+        "sequence": [
+            _sequence_entry(index, item)
+            for index, item in enumerate(selection.skills, 1)
+        ],
+        "output": {
+            "directory": str(directory),
+            "report": str(directory / "report.md"),
         },
     }
 
