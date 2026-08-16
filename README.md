@@ -247,6 +247,27 @@ oce-sentry --connectors        # probe everything, headless
 
 It costs real money. Every server's tool definitions enter the prompt, and a measured `impact` run went from **28.4 credits** to **107 credits on 536k tokens**. That is the tradeoff the setting exists to make explicit.
 
+### Kits and connectors
+
+Connectors are **off by default**, and kits are the reason that is workable rather than merely safe.
+
+A **query kit** runs verified KQL directly against Kusto with your own `az login` token — no MCP, no model composing queries against production. Its output persists, and the next skill run picks it up automatically: the pack gains a `kit-results/` directory and `context.md` tells the model those are measured rows rather than estimates.
+
+```
+x on the queue          run the matching query kit   (real Kusto, ~4s, no credits)
+l -> x, or k -> x       run a skill or a kit         (reads the rows it produced)
+```
+
+Verified end to end: a query kit returned 125 rows of monitor breakdown, and the next `outage-pattern` run cited `LSLA013` and its 2,091 incidents from that output.
+
+Three rules keep it honest, enforced by tests:
+
+- **Results are scoped to one incident.** Evidence from another incident is never borrowed.
+- **Skill answers are not evidence.** Only runs carrying an `actionId` are collected; feeding one model's prose to the next as measurement is how a guess becomes a citation.
+- **Output older than 24 hours is dropped.** A week-old row set from the same monitor describes a different firing.
+
+Turning connectors on lets skills query live instead, at roughly 4x the credits ([see above](#settings-and-connectors)). The kit path costs nothing per run and produces a query someone can review.
+
 ### Filing and tracking bugs
 
 `b` opens the tracker, and `c` **inside it** opens CREATE BUG: pick a category (noisy monitor, TSG gap, routing, process, other), describe the problem in your own words, and a skill drafts a well-formed bug from your note plus whatever Sentry knows about the incident you had selected. **You read the draft before anything is created.**

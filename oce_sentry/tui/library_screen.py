@@ -284,10 +284,18 @@ class LibraryScreen(Screen):
                 run = run_action(entry.action, incident, self._config)
                 self.app.call_from_thread(self._show_kit_run, run)
             elif entry.skill is not None:
+                from ..actions import actions_for, discover_kits
                 from ..copilot import run_skill
                 from ..packs import build_pack
 
-                pack = build_pack(incident, self._config)
+                # Pass the matching kits so the pack carries base-rates.md and
+                # any recent query output. Without them a skill browsed to from
+                # here got a thinner pack than the same skill run from a kit.
+                matching = [
+                    a for a in actions_for(incident, discover_kits(self._config))
+                    if a.kind == "kit"
+                ]
+                pack = build_pack(incident, self._config, kits=matching)
                 run = run_skill(entry.skill, incident, pack, self._config, allow_shell=False)
                 self.app.call_from_thread(self._show_skill_run, run)
         except Exception as exc:  # noqa: BLE001 - surfaced verbatim

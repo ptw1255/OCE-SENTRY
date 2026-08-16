@@ -18,7 +18,7 @@ import shutil
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .models import Incident, utcnow
@@ -56,7 +56,7 @@ def _incident_dict(incident: Incident) -> dict:
     }
 
 
-def _render_context(incident: Incident, kits) -> str:
+def _render_context(incident: Incident, kits, kit_results=None) -> str:
     lines = [
         f"# Incident {incident.incident_id}",
         "",
@@ -84,6 +84,20 @@ def _render_context(incident: Incident, kits) -> str:
         lines += ["", "## Investigation kits matching this monitor", ""]
         for kit in kits:
             lines.append(f"- `{kit.id}`")
+
+    if kit_results:
+        lines += [
+            "",
+            "## Query results available in this pack",
+            "",
+            "`kit-results/` holds the output of investigation queries already run",
+            "against this incident, with the operator's own credentials. These are",
+            "measured rows, not estimates -- prefer them over anything inferred.",
+            "",
+        ]
+        for action_id, _ in kit_results:
+            lines.append(f"- `{action_id}`")
+
     lines += [
         "",
         "## What this is",
@@ -103,11 +117,79 @@ Assembled by OCE Sentry for one incident, for one skill run.
 Everything here was already measured. `incident.json` is the queue row as the
 console holds it. `context.md` is the same, rendered for reading.
 `base-rates.md`, when present, is an investigation kit's precomputed history for
-this condition -- often the answer on its own. `kit-results/` holds output from
-kits the operator ran during this session.
+this condition -- often the answer on its own. `kit-results/` holds the output
+of investigation queries that were run against this incident: real rows from
+Kusto, measured with the operator's own credentials.
 
 Nothing in this directory is a source of truth. IcM is.
 """
+
+#: How many recent query-kit results to carry into a pack. Enough to include a
+#: short investigation, few enough that the prompt stays about this incident.
+MAX_KIT_RESULTS = 5
+
+#: Query output older than this is not evidence about the incident in front of
+#: you. A week-old row set from the same monitor describes a different firing.
+KIT_RESULT_MAX_AGE = timedelta(hours=24)
+
+
+def load_kit_results(
+    incident: Incident,
+    config,
+    limit: int = MAX_KIT_RESULTS,
+    max_age: timedelta = KIT_RESULT_MAX_AGE,
+) -> list[tuple[str, str]]:
+    """Recent investigation-query output for this incident, newest first.
+
+    Read from disk rather than passed in memory. A query kit is run from the
+    queue and a skill from another screen -- often minutes later, sometimes
+    after a restart -- so requiring the caller to hold the run objects meant
+    the results never actually reached a skill. They were persisted and then
+    forgotten.
+
+    This is the path that makes kits an alternative to live connectors: the
+    query runs once, verified and reviewable, against the operator's own
+    credentials; the skill then reads real rows without touching a cluster.
+    """
+    directory = config.output_dir / incident.incident_id
+    if not directory.is_dir():
+        return []
+
+    cutoff = utcnow() - max_age
+    found: list[tuple[float, str, str]] = []
+    try:
+        sidecars = sorted(directory.glob("*.json"))
+    except OSError:
+        return []
+
+    for sidecar in sidecars:
+        try:
+            meta = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        # Skill runs land in the same directory and carry skillId; their
+        # answers are prose, not measurements, and feeding one skill's output
+        # to the next as evidence is how a guess becomes a citation.
+        action_id = meta.get("actionId")
+        if not action_id:
+            continue
+
+        stdout = sidecar.parent / f"{sidecar.stem}.stdout.txt"
+        if not stdout.is_file():
+            continue
+        try:
+            mtime = stdout.stat().st_mtime
+            if datetime.fromtimestamp(mtime, tz=timezone.utc) < cutoff:
+                continue
+            body = stdout.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not body.strip():
+            continue
+        found.append((mtime, str(action_id), body))
+
+    found.sort(key=lambda item: item[0], reverse=True)
+    return [(action_id, body) for _, action_id, body in found[:limit]]
 
 
 def build_pack(
@@ -115,6 +197,7 @@ def build_pack(
     config,
     kits=None,
     kit_runs=None,
+    include_kit_results: bool = True,
 ) -> ContextPack:
     kits = kits or []
     kit_runs = kit_runs or []
@@ -125,12 +208,30 @@ def build_pack(
 
     written: list[str] = []
 
+    # Resolved before context.md is written, so the rendered context can say
+    # these numbers are measured rather than leaving the model to notice a
+    # directory. Fresh in-session runs first, then whatever else is on disk:
+    # a run that just finished has not necessarily been persisted yet.
+    results: list[tuple[str, str]] = [
+        (run.action_id, f"# {run.action_id} ({run.summary()})\n\n{run.stdout}")
+        for run in kit_runs[-MAX_KIT_RESULTS:]
+    ]
+    if include_kit_results:
+        seen = {action_id for action_id, _ in results}
+        for action_id, body in load_kit_results(incident, config):
+            if action_id not in seen:
+                results.append((action_id, body))
+                seen.add(action_id)
+    results = results[:MAX_KIT_RESULTS]
+
     (directory / "incident.json").write_text(
         json.dumps(_incident_dict(incident), indent=2), encoding="utf-8"
     )
     written.append("incident.json")
 
-    (directory / "context.md").write_text(_render_context(incident, kits), encoding="utf-8")
+    (directory / "context.md").write_text(
+        _render_context(incident, kits, results), encoding="utf-8"
+    )
     written.append("context.md")
 
     (directory / "README.md").write_text(_README, encoding="utf-8")
@@ -151,16 +252,16 @@ def build_pack(
                 pass
             break
 
-    if kit_runs:
-        results = directory / "kit-results"
-        results.mkdir(exist_ok=True)
-        for run in kit_runs[-5:]:
-            name = f"{run.action_id}-{run.run_id}.txt"
+    # Fresh in-session runs first, then whatever else is on disk for this
+    # incident. Both paths write the same directory, and a run that just
+    # finished has not necessarily been persisted yet.
+    if results:
+        directory_results = directory / "kit-results"
+        directory_results.mkdir(exist_ok=True)
+        for index, (action_id, body) in enumerate(results[:MAX_KIT_RESULTS]):
+            name = f"{index:02d}-{action_id}.txt"
             try:
-                (results / name).write_text(
-                    f"# {run.action_id} ({run.summary()})\n\n{run.stdout}",
-                    encoding="utf-8",
-                )
+                (directory_results / name).write_text(body, encoding="utf-8")
                 written.append(f"kit-results/{name}")
             except OSError:
                 pass
