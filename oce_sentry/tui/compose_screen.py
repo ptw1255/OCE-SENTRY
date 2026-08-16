@@ -252,8 +252,9 @@ class ComposeScreen(Screen):
             self._set_path_message(f"[red]{_escape(self._error)}[/red]")
             return
 
-        from ..connectors import load_connectors
+        from ..connectors import annotate_requirements, load_connectors
         from ..manifest import build_manifest, render, write_manifest
+        from ..skills import discover_skills
 
         selection = Selection(
             queries=[obj for kind, item_id, _, _, obj in self._rows
@@ -261,11 +262,17 @@ class ComposeScreen(Screen):
             skills=[obj for kind, item_id, _, _, obj in self._rows
                     if kind == "skill" and (kind, item_id) in self._chosen],
         )
+        # Annotate before building: the manifest reads required_by to work out
+        # which connectors the chosen skills need, and an unannotated list
+        # reports only what the queries need.
+        connectors = load_connectors(self._config)
+        annotate_requirements(connectors, [s for s in discover_skills(self._config) if s.ok])
+
         manifest = build_manifest(
             self._incident,
             selection,
             self._config,
-            connectors=load_connectors(self._config),
+            connectors=connectors,
             window=self._window,
             generated_at=utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         )

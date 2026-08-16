@@ -221,13 +221,7 @@ def build_manifest(
         "resources": {
             "clusters": clusters,
             "connectors": [
-                {
-                    "name": c.name,
-                    "type": c.kind,
-                    "target": c.target,
-                    "status": c.status,
-                    "purpose": c.purpose or None,
-                }
+                _connector_block(c, selection)
                 for c in _needed_connectors(selection, connectors or [])
             ],
             "skillRoots": sorted(
@@ -255,13 +249,45 @@ def _access(cluster: str) -> dict[str, Any]:
 
 
 def _needed_connectors(selection: Selection, connectors) -> list:
-    if not selection.queries:
-        return []
-    wanted = {"azure"}
-    for query in selection.queries:
-        if "icmcluster" in query.cluster:
-            wanted.add("icm")
+    """Connectors this payload needs, from both the queries and the skills.
+
+    Deriving these from the queries alone left the address book wrong where it
+    mattered: `network` names geneva-mcp, workiq and icm in its own
+    instructions, and a manifest listing only `azure` tells the agent it has
+    everything it needs when it does not.
+
+    Skill requirements are read from the skill's prose by `annotate_requirements`,
+    so they are indicative rather than declared -- which is why they are marked
+    as such in the output rather than presented as a contract.
+    """
+    wanted: set[str] = set()
+    if selection.queries:
+        wanted.add("azure")
+        for query in selection.queries:
+            if "icmcluster" in query.cluster:
+                wanted.add("icm")
+
+    chosen = {item.skill_id for item in selection.skills}
+    for connector in connectors:
+        if chosen & set(getattr(connector, "required_by", []) or []):
+            wanted.add(connector.name)
+
     return [c for c in connectors if c.name in wanted]
+
+
+def _connector_block(connector, selection: Selection) -> dict[str, Any]:
+    chosen = {item.skill_id for item in selection.skills}
+    named_by = sorted(chosen & set(getattr(connector, "required_by", []) or []))
+    return {
+        "name": connector.name,
+        "type": connector.kind,
+        "target": connector.target,
+        "status": connector.status,
+        "purpose": connector.purpose or None,
+        #: Which selected skills mention it. Read from skill prose, so this is
+        #: indicative rather than a declaration by the skill.
+        "namedBySkills": named_by or None,
+    }
 
 
 def render(manifest: dict[str, Any]) -> str:

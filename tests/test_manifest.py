@@ -247,6 +247,61 @@ def test_auth_is_stated_once():
     assert _manifest(Selection())["resources"]["auth"] == "az login"
 
 
+def test_connectors_include_what_the_skills_need(tmp_path):
+    """Deriving connectors from queries alone left the address book wrong.
+
+    `network` names geneva-mcp and workiq in its own instructions; a manifest
+    listing only `azure` tells the agent it has everything when it does not.
+    """
+
+    class _Connector:
+        def __init__(self, name, required_by):
+            self.name = name
+            self.kind = "stdio"
+            self.target = f"agency mcp {name}"
+            self.status = "ready"
+            self.purpose = ""
+            self.required_by = required_by
+
+    connectors = [
+        _Connector("azure", ["network"]),
+        _Connector("geneva-mcp", ["network"]),
+        _Connector("workiq", ["network"]),
+        _Connector("drdashboard", ["something-else"]),
+    ]
+    incident = _incident()
+    manifest = build_manifest(
+        incident,
+        Selection(skills=[_skill()]),
+        _Config(),
+        connectors=connectors,
+        window=resolve_window(incident, now=NOW),
+    )
+    listed = {c["name"] for c in manifest["resources"]["connectors"]}
+    assert listed == {"azure", "geneva-mcp", "workiq"}
+    assert "drdashboard" not in listed
+
+
+def test_a_connector_says_which_skills_named_it():
+    class _Connector:
+        name = "geneva-mcp"
+        kind = "stdio"
+        target = "dnx GenevaMonitoring.MCP.Server"
+        status = "ready"
+        purpose = "Geneva monitor health"
+        required_by = ["network", "redis"]
+
+    incident = _incident()
+    manifest = build_manifest(
+        incident,
+        Selection(skills=[_skill()]),
+        _Config(),
+        connectors=[_Connector()],
+        window=resolve_window(incident, now=NOW),
+    )
+    assert manifest["resources"]["connectors"][0]["namedBySkills"] == ["network"]
+
+
 def test_the_path_is_stable(tmp_path):
     incident = _incident()
     config = _Config(tmp_path)
