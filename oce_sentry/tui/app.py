@@ -255,6 +255,9 @@ class IncidentScreen(Screen):
             f"owner    {incident.owning_contact_alias or '(unassigned)'}  ({incident.owning_team_name})",
             f"monitor  {_escape(incident.monitor_id) if incident.monitor_id else '(none recorded)'}",
             f"reason   {incident.track_reason}",
+            # "how long" and "since when" are different questions, and an
+            # on-call engineer picking up a queue asks both.
+            f"opened   {incident.opened_at or '(unknown)'}",
             f"open     {incident.hours_open:.0f}h" + ("  [red]STALE[/red]" if incident.is_stale else ""),
         ]
         if incident.is_customer_impacting:
@@ -282,6 +285,17 @@ class IncidentScreen(Screen):
                         lines.append(f"    [dim]base rate: {bits}[/dim]")
             if len(self._candidates) > 1:
                 lines.append(f"[dim]{len(self._candidates) - 1} more in the skill browser (l)[/dim]")
+
+        # Last, because it is the longest thing here and the fields above are
+        # what an operator triages on. Plenty of monitor-filed incidents carry
+        # nothing, so its absence is stated rather than left as a blank gap.
+        lines += ["", "[b]Description[/b]"]
+        description = incident.description
+        if description:
+            lines += [_escape(line) for line in description.splitlines()]
+        else:
+            lines.append("[dim]IcM recorded no description for this incident.[/dim]")
+
         detail.update("\n".join(lines))
 
     # ---------------------------------------------------------------- actions

@@ -84,7 +84,8 @@ def build_watchlist_query(scope: dict, table: str, lookback_days: int) -> str:
 | project IncidentId, Title, Severity, SevNorm, Status, IncidentType, TrackReason,
           MonitorId, OwningTeamId, OwningTeamName, OwningContactAlias,
           CreateDate, MitigateDate, MitigatedBy, IsTerminal, MinutesOpen,
-          IsCustomerImpacting, EnvClass, TsgId
+          IsCustomerImpacting, EnvClass, TsgId,
+          Summary = substring(coalesce(Summary, ''), 0, 6000)
 | order by SevNorm asc, CreateDate desc"""
 
 
