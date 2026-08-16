@@ -115,8 +115,15 @@ section, not a plausible-looking guess.
 
 ## Not required
 
-- **GitHub Copilot CLI.** Sentry builds payloads; it does not run agents. The
-  OCE runs their own CLI against the payload.
+- **GitHub Copilot CLI** — for the queue, SLIs, and payloads. Sentry builds
+  payloads; it does not run agents, and the OCE runs their own CLI against the
+  payload.
+
+  **One exception:** Create Bug (`b` then `c`) drafts the bug with a skill, so
+  that one action does invoke Copilot and does cost credits. Without the CLI
+  installed it reports that plainly instead of failing obscurely. Everything
+  else — the queue, the SLI view, the bug *tracker*, and every payload — makes
+  no model call at all.
 - **MCP servers running.** Settings reports whether each *could* start. They
   are not launched by Sentry.
 - **Any PAT or secret.** There is no configuration file with credentials in it,
