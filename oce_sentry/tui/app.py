@@ -84,13 +84,10 @@ class IncidentScreen(Screen):
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
+        Binding("p", "compose_payload", "Payload"),
         Binding("o", "open_icm", "IcM"),
         Binding("t", "open_tsg", "TSG"),
-        Binding("x", "run_action", "Run query"),
-        Binding("d", "open_explorer", "Data Explorer"),
         Binding("s", "show_slis", "SLIs"),
-        Binding("k", "show_kits", "Kits"),
-        Binding("l", "show_skills", "Skills"),
         Binding("b", "show_bugs", "Bugs"),
         Binding("exclamation_mark", "show_settings", "Settings", key_display="!"),
         Binding("q", "quit", "Quit"),
@@ -290,34 +287,29 @@ class IncidentScreen(Screen):
             lines.append(f"tracked  the fleet has looked at this {incident.runs_tracked} time(s)")
 
         lines.append("")
+        # The full path lives on the compose screen, which has the width for
+        # it. Here, in a 35-column pane, an absolute path wraps into noise --
+        # what an operator needs from the queue is whether one exists.
+        from ..payload import payload_path
+
+        path = payload_path(incident, self._config)
+        state = "[green]written[/green]" if path.is_file() else "[dim]none yet[/dim]"
+        lines.append(f"[b]p[/b]  compose a payload for your agent   {state}")
+
         if not self._candidates:
-            lines.append("[dim]No investigation query matches this monitor.[/dim]")
+            lines += ["", "[dim]No investigation query matches this monitor.[/dim]"]
             if not incident.monitor_id:
                 lines.append("[dim]It carries no monitorId, so none can be matched.[/dim]")
         else:
-            # Say what x does, not just that it exists. The kit id is a
-            # generated slug -- "sev3-alertstorm-244-...-fdeb1e" tells an
-            # operator nothing about whether pressing a key is safe.
             action = self._candidates[0]
-            effects = "read-only" if action.read_only else "WRITES"
-            lines += [
-                "[b]x[/b]  run the investigation query for this monitor",
-                "[dim]verified KQL, runs locally as you, a few seconds,[/dim]",
-                "[dim]no model and no credits. Results feed later skills.[/dim]",
-                f"[dim]{effects}: {_escape(action.id)}[/dim]",
-            ]
-            from ..dataexplorer import kit_url
-
-            if kit_url(action.directory):
-                lines.append("[b]d[/b]  open the same query in Data Explorer")
-            if action.base_rate:
-                bits = ", ".join(f"{k}={v}" for k, v in action.base_rate.items() if k != "tsg")
-                if bits:
-                    lines.append(f"[dim]base rate: {bits}[/dim]")
-            if len(self._candidates) > 1:
-                lines.append(
-                    f"[dim]{len(self._candidates) - 1} more query kit(s); see --query-kits[/dim]"
-                )
+            if action.kind == "kit":
+                lines += ["", f"[dim]query available: {_escape(action.id)}[/dim]"]
+                if action.base_rate:
+                    bits = ", ".join(
+                        f"{k}={v}" for k, v in action.base_rate.items() if k != "tsg"
+                    )
+                    if bits:
+                        lines.append(f"[dim]base rate: {bits}[/dim]")
 
         # Last, because it is the longest thing here and the fields above are
         # what an operator triages on. Plenty of monitor-filed incidents carry
@@ -378,23 +370,17 @@ class IncidentScreen(Screen):
             BugScreen(self._config, self._tokens, self._current_incident())
         )
 
-    def action_open_explorer(self) -> None:
-        """Open this monitor's query in Data Explorer without running it here.
-
-        For an operator who would rather read the table in a browser than in a
-        terminal, which for a wide result is the reasonable preference.
-        """
-        from ..dataexplorer import kit_url
-
-        if not self._candidates:
-            self._log("[dim]no investigation query matches this monitor[/dim]")
+    def action_compose_payload(self) -> None:
+        """Assemble a handoff for this incident."""
+        incident = self._current_incident()
+        if incident is None:
             return
-        url = kit_url(self._candidates[0].directory)
-        if url:
-            webbrowser.open(url)
-            self._log("[dim]opened the query in Azure Data Explorer[/dim]")
-        else:
-            self._log("[yellow]this kit does not record which cluster it queries[/yellow]")
+        from .compose_screen import ComposeScreen
+
+        def _done(_: object | None) -> None:
+            self._update_detail()
+
+        self.app.push_screen(ComposeScreen(self._config, self._tokens, incident), _done)
 
     def action_open_icm(self) -> None:
         incident = self._current_incident()
@@ -403,8 +389,13 @@ class IncidentScreen(Screen):
 
     def action_open_tsg(self) -> None:
         incident = self._current_incident()
-        if incident and incident.tsg_id:
+        # IcM stores "** REDACTED **" for MSRC incidents, which was being
+        # handed to the browser as a URL. A field that is not a link is not a
+        # link, whatever it says.
+        if incident and incident.tsg_id.lower().startswith("http"):
             webbrowser.open(incident.tsg_id)
+        elif incident and incident.tsg_id:
+            self._log(f"[yellow]IcM recorded no usable TSG: {_escape(incident.tsg_id)}[/yellow]")
         else:
             self._log("[dim]no TSG recorded on this incident[/dim]")
 

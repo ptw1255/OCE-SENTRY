@@ -311,3 +311,40 @@ CreateBugScreen {
     background: $panel;
     color: $text-muted;
 }
+
+/* Compose. The path sits on its own line at the bottom because it is the
+   product: it is what the operator hands their agent, so it is visible before,
+   during and after the build. */
+#cmp-head {
+    height: auto;
+    padding: 1 2;
+    background: $panel;
+}
+
+#cmp-body {
+    height: 1fr;
+}
+
+#cmp-table {
+    height: auto;
+    max-height: 50%;
+}
+
+#cmp-detail {
+    height: 1fr;
+    border-top: solid $panel;
+    scrollbar-gutter: stable;
+    padding: 1 2;
+}
+
+#cmp-info {
+    width: 1fr;
+}
+
+#cmp-path {
+    height: 1;
+    padding: 0 1;
+    background: $accent;
+    color: $text;
+    text-style: bold;
+}
