@@ -375,6 +375,9 @@ Content rules regardless of visibility:
 - Internal endpoints (cluster URIs, library paths, ADO org names) live in
   configuration, not in code, so the repository stays portable and reviewable.
 
+## Product portfolio
+
+See [`docs/product/README.md`](docs/product/README.md) for the product rationale, on-call jobs and journeys, value proposition, pain and opportunity-cost model, proposed state-complete wireframes, roadmap, and measurement plan. The portfolio cites repository paths while keeping runtime incident data, identities, and internal endpoint details out of the artifacts.
 
 
 
