@@ -8,7 +8,7 @@ the known-noise backlog into one local app on your machine.
 > and headless mode all run today. The remaining work is polish and deeper
 > product surfacing.
 
-## What it does
+## Outcome first
 
 OCE Sentry is built for the moment an incident pages and you need answers in
 this order:
@@ -21,6 +21,14 @@ this order:
 It assembles those answers from the evidence already on hand, so you do not
 have to stitch them together while the page is live.
 
+What that feels like in practice:
+
+- the queue tells you what needs attention now
+- the detail pane tells you what is already known
+- kits tell you what to run next
+- actions tell you what can be done safely
+- the status line tells you what is hidden and why
+
 ## Product shape
 
 - Queue-first incident view
@@ -29,6 +37,27 @@ have to stitch them together while the page is live.
 - Hash-gated caching so a new judgment only happens when the evidence changes
 - Explicit writes only, with gated actions and explanatory comments
 - Actionable rows only, with hidden counts in the status line
+
+## How the agent is orchestrated
+
+The app is not a passive list. It uses a tool-driven flow:
+
+1. The queue selects one incident.
+2. The user picks a kit, skill, or action.
+3. The app builds a scoped work request for that tool.
+4. The tool runs against the selected incident and returns evidence or a result.
+5. The UI renders the result and keeps the original evidence visible.
+
+The important part is the boundary:
+
+- the UI chooses the tool
+- the tool chooses the work
+- the output is carried back as evidence
+- no hidden source paths need to appear in the landing page
+
+```text
+incident row -> selected tool -> scoped request -> result -> updated evidence
+```
 
 ## What it is not
 
@@ -63,6 +92,14 @@ carried over deliberately:
 - Hash-gated caching.
 - Nearly read-only.
 - Only actionable rows are shown.
+
+That gives you a console that feels like a product rather than a script:
+
+- clear starting point
+- obvious next action
+- evidence preserved
+- unsafe actions gated
+- output easy to explain to the next person on call
 
 ### Optional extras
 
@@ -111,4 +148,3 @@ which skills need it.
 - [docs/RUNBOOK-SOURCES.md](docs/RUNBOOK-SOURCES.md)
 - [docs/SKILL-SOURCES.md](docs/SKILL-SOURCES.md)
 - [docs/SETUP.md](docs/SETUP.md)
-
