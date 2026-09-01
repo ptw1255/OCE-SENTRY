@@ -241,7 +241,7 @@ Every row also states **WITHOUT IT** — what you actually lose. That differs by
 
 `p` probes each one with `print ProbeOk=1`, evaluated in the database's context so a success proves network, token and database authorisation together. It reads nothing: this must never become a way to sample production data.
 
-Clusters the RCA reference redacts are listed and marked `redacted` rather than probed — a DNS failure on a placeholder hostname says nothing about your access. A cluster a skill names that the reference does not know is listed as *"Not in the reference"*, which is the signal that a new data source arrived.
+Clusters the RCA reference redacts are listed and marked `redacted` rather than probed — a DNS failure on a placeholder hostname says nothing about your access. A cluster a skill names that the reference does not know is listed as *"Not in the reference"*, which is the signal that a new [Data Source] arrived.
 
 Purposes are transcribed from the RCA agent's own [`MCP_Servers_Kusto_Cluster_References.md`](https://onedrive.visualstudio.com/SPARC/_git/SRELivesite-RCAAgent), so they are the team's words rather than a guess.
 
@@ -266,7 +266,7 @@ d on the queue          open the same query in Azure Data Explorer
 l -> x, or k -> x       run a skill or a kit         (reads the rows it produced)
 ```
 
-A result opens full width in the console, and `d` opens the same query in **Azure Data Explorer** — sortable, filterable, exportable, and already signed in as you. A wide table is easier to read in a browser than in a terminal, and this is the same query either way. The link carries the KQL gzipped in the URL; nothing is executed by Sentry and no credentials leave the machine.
+A result opens full width in the console, and `d` opens the same query in **Azure Data Explorer** — sortable, filterable, exportable, and already signed in as you. A wide table is easier to read in a browser than in a terminal, and this is the same query either way. The link carries the KQL gzipped in the URL; nothing is executed by Sentry and no {Credential} leaves the machine.
 
 Incident-window placeholders are deliberately **not** substituted into the link. The console does not know the window the kit's own runner computes, and filling in a guess would produce a query that looks authoritative and measures a different period.
 
@@ -371,10 +371,9 @@ Content rules regardless of visibility:
 
 - **No incident data is ever committed.** Incident IDs, titles, owner aliases
   and evidence are read at runtime and cached locally, never checked in.
-- **No credentials, ever.** The ambient Azure identity is the only credential.
+- **No {Credential}, ever.** The ambient Azure identity is the only {Credential}.
 - Internal endpoints (cluster URIs, library paths, ADO org names) live in
   configuration, not in code, so the repository stays portable and reviewable.
-
 
 
 

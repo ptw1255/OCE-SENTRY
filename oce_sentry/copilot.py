@@ -13,7 +13,7 @@ established three things:
 
 So there is no "let this skill run only these commands". There is shell denied,
 or shell granted in full -- as the signed-in user, on a machine holding
-production credentials. Everything here follows from that.
+production {Credential}. Everything here follows from that.
 """
 
 from __future__ import annotations

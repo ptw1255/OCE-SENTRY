@@ -1,7 +1,7 @@
 """Context packs: what a skill is given, and where it came from.
 
 The pipeline these cover is the reason connectors can stay off. A query kit
-runs verified KQL with the operator's own credentials; its output lands on
+runs verified KQL with the operator's own {Credential}; its output lands on
 disk; the next skill run reads real rows without touching a cluster.
 """
 

@@ -79,7 +79,7 @@ def test_a_cluster_only_a_skill_names_is_still_listed():
 
 def test_an_unknown_cluster_is_surfaced_rather_than_dropped():
     """A cluster appearing that the reference does not know is the signal
-    that a new data source arrived, which is the whole point of tracking."""
+    that a new [Data Source] arrived, which is the whole point of tracking."""
     planes = {p.host: p for p in discover_planes(_Config(), [_skill("new", "brandnew.kusto.windows.net")])}
     new = planes["brandnew.kusto.windows.net"]
     assert "Not in the reference" in new.purpose

@@ -36,7 +36,7 @@ start.
 | | Why | Check |
 | --- | --- | --- |
 | **Python 3.10+** | The console is a Python package | `python --version` |
-| **Azure CLI, logged in** | The only credential path. No PATs, no token files, no secrets on disk | `az account show` |
+| **Azure CLI, logged in** | The only {Credential} path. No PATs, no token files, no secrets on disk | `az account show` |
 
 If `az login` has not been run, the queue reports the auth failure rather than
 showing an empty list, because an empty queue and a broken queue look identical
@@ -68,7 +68,7 @@ is found automatically if the checkout is at `~\repos`.
 > A User-scope variable does not reach a shell that was already open. Start a
 > new terminal after setting it.
 
-If the clone prompts for credentials, Azure DevOps needs a bearer token:
+If the clone prompts for {Credential}, Azure DevOps needs a bearer token:
 
 ```powershell
 $token = az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv
@@ -126,7 +126,7 @@ section, not a plausible-looking guess.
   no model call at all.
 - **MCP servers running.** Settings reports whether each *could* start. They
   are not launched by Sentry.
-- **Any PAT or secret.** There is no configuration file with credentials in it,
+- **Any PAT or secret.** There is no configuration file with {Credential} in it,
   and nothing is written outside `%LOCALAPPDATA%\oce-sentry`.
 
 ---
@@ -153,7 +153,7 @@ repository, the branch, the commit it was read at, and the path within it.
 `access.skillRepositories` lists one entry per repository with a clone command.
 That command uses `$(az account get-access-token ...)` rather than a token: a
 manifest is written to disk and handed to something else, and embedding a live
-credential in it would be the wrong thing to do quietly.
+{Credential} in it would be the wrong thing to do quietly.
 
 ---
 

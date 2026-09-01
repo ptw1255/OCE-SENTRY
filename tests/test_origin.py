@@ -110,7 +110,7 @@ def test_every_known_repo_can_be_cloned():
 def test_the_clone_uses_a_token_substitution_not_a_token():
     """A manifest is written to disk and read elsewhere.
 
-    Embedding a real bearer token would put a live credential in a file whose
+    Embedding a real bearer token would put a live {Credential} in a file whose
     whole purpose is to be handed to something else.
     """
     command = clone_instructions(["ODSP-SRE-AI-Skills"])[0]["clone"]
