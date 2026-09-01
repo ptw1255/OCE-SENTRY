@@ -82,10 +82,6 @@ needed to start.
 
 ## How it works
 
-Modelled on the `risk-management-harness` (Risk Sentry) in
-`onedrive/Security/appsec-ai-tools`, and its sibling PR Sentry. The patterns
-carried over deliberately:
-
 - Tabbed Textual TUI, `python -m oce_sentry`, `--once` for a console dump, `--dev` for hot reload.
 - `az login` is the entire auth story. No PATs, no token files, no secrets in config.
 - Deterministic fetch; the model judges only.
