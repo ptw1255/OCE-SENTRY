@@ -1,82 +1,62 @@
 # OCE Sentry
 
-**A terminal an On-Call Engineer can work an incident from.** Active incidents,
-the evidence already gathered about them, the runbooks and investigation kits
-that apply, and the noise bugs behind the pages — in one place, on your own
-machine, without hosting anything.
+**The incident console for an on-call engineer.** It pulls the queue, the
+evidence already gathered, the runbooks and investigation kits that apply, and
+the noise bugs behind the pages into one local app on your machine.
 
-> Status: **working v1**. The live incident queue, the detail pane, kit
-> execution and headless mode all run today. Tabs for ADO noise bugs and fleet
-> health are not built yet.
+> Status: **working v1**. The live incident queue, detail pane, kit execution,
+> and headless mode all run today. ADO noise bugs and fleet health are listed
+> in the app, but those tabs are not built yet.
 
----
+## What it does
 
-## Who this is for
+OCE Sentry is built for the moment an incident pages and you need answers in
+this order:
 
-You are on call. An incident pages. You want, in this order:
+1. Is this in scope, and has anything already looked at it?
+2. Have we seen this exact condition before, and what happened last time?
+3. What should I run first?
+4. Is this monitor a known noise source with a bug already filed?
 
-1. **Is this in scope, and has anything already looked at it?**
-2. **Have we seen this exact condition before, and what happened last time?**
-3. **What should I run first?**
-4. **Is this monitor a known noise source with a bug already filed?**
+It assembles those answers from the evidence sources you already trust, so you
+do not have to stitch them together while the page is live.
 
-Every one of those questions already has an answer somewhere. The problem is
-that the answers are spread across a SharePoint library, an IcM queue, an ADO
-board, a Kusto cluster and a git repository — so in practice nobody assembles
-them while a page is live. This console assembles them.
+## Product shape
+
+- Queue-first incident view
+- Read-only by default
+- Deterministic fetch; the model only judges evidence that was already gathered
+- Hash-gated caching so a new judgment only happens when the evidence changes
+- Explicit writes only, with gated actions and explanatory comments
+- Actionable rows only, with hidden counts in the status line
 
 ## What it is not
 
-- **Not a second incident system of record.** IcM remains authoritative.
-- **Not a mitigation tool.** It does not restart, scale, or change any
-  production resource. That boundary is inherited from the fleet it reads and
-  is not configurable.
-- **Not a new pipeline.** It computes nothing. If a number is not already in
-  the evidence, the console says so rather than deriving it — because a number
-  derived here would eventually disagree with the report a stakeholder was
-  sent.
+- Not a second incident system of record. IcM remains authoritative.
+- Not a mitigation tool. It does not restart, scale, or change production resources.
+- Not a new pipeline. It computes nothing that is not already in the evidence.
 
 ## Where the data comes from
 
-The console is a reader. Everything it shows is produced by the **MeTA live
-site agent fleet**, which watches ODSP live site incidents, measures blast
-radius, publishes reports, and files monitor-noise bugs.
+Everything in the console is produced by the MeTA live site agent fleet, which
+watches ODSP live site incidents, measures blast radius, publishes reports, and
+files monitor-noise bugs.
 
-See **[docs/DATA-MAP.md](docs/DATA-MAP.md)** for the full connection map:
-every source, what it carries, how it is reached, how it authenticates, and how
-stale it is allowed to get.
+See [docs/DATA-MAP.md](docs/DATA-MAP.md) for the full connection map: every
+source, what it carries, how it is reached, how it authenticates, and how stale
+it is allowed to get.
 
-Short version:
+At a glance:
 
 | Question | Answered from |
 | --- | --- |
 | What is active and in scope? | Watchlist queue |
 | What did we already learn? | Incident report + scope verdict, in the MeTA-SRE-Comms library |
-| What do I run? | Investigation kits and runbooks — see [docs/RUNBOOK-SOURCES.md](docs/RUNBOOK-SOURCES.md) |
+| What do I run? | Investigation kits and runbooks - see [docs/RUNBOOK-SOURCES.md](docs/RUNBOOK-SOURCES.md) |
 | Is this monitor known-noisy? | ADO noise bugs filed by the fleet |
-| Can I trust what I'm looking at? | Fleet health — when each loop last ran |
+| Can I trust what I’m looking at? | Fleet health - when each loop last ran |
 
-## Experience model
-
-Modelled on the `risk-management-harness` (Risk Sentry) in
-`onedrive/Security/appsec-ai-tools`, and its sibling PR Sentry. The patterns
-carried over deliberately:
-
-- **Tabbed Textual TUI**, `python -m oce_sentry`, `--once` for a console dump,
-  `--dev` for hot reload.
-- **`az login` is the entire auth story.** No PATs, no token files, no secrets
-  in config.
-- **Deterministic fetch; the model judges only.** The harness gathers, and any
-  AI layer reads only what was gathered. It cannot query, and it cannot produce
-  a number.
-- **Hash-gated AI caching** — re-judge when the underlying evidence changes,
-  never on a timer.
-- **Nearly read-only.** Writes are individually gated, off by default, applied
-  only by an explicit click, and every one carries an explanatory comment.
-- **Only actionable rows are shown**, with hidden counts in the status line. A
-  flat list of everything tracked is not a work queue.
-
-## Install
+## Start here
 
 ```powershell
 python -m pip install "git+https://github.com/parkerwall_microsoft/oce-sentry.git@main"
@@ -86,21 +66,20 @@ oce-sentry              # the TUI
 oce-sentry --once       # one fetch, console dump, exit
 ```
 
-That is the whole thing. Prerequisites: Python 3.10+ and Azure CLI signed in.
+Prerequisites: Python 3.10+ and Azure CLI signed in.
 
 Everything beyond that is optional and adds to the payload rather than being
-needed to start — see **[docs/SETUP.md](docs/SETUP.md)** for what each checkout
-buys you, measured rather than estimated. With `az login` alone you get the
-queue, the SLI view, the bug tracker, and a payload carrying the incident's
-facts; cloning the ODSP skill repositories adds the skill sequence, and the
-fleet checkout adds resolved investigation queries.
+needed to start. With `az login` alone you get the queue, the SLI view, the bug
+tracker, and a payload carrying the incident facts. Cloning the ODSP skill
+repositories adds the skill sequence, and the fleet checkout adds resolved
+investigation queries.
 
 **Sentry is independent of the goobers pipeline.** It needs no daemon, no
 instance directory, no pipeline checkout, and nothing the fleet publishes. The
 queue is a live IcM query, and the scope policy that shapes it ships inside the
 package at `oce_sentry/policy/scope.json`.
 
-That policy was seeded from the MeTA fleet's `data-paths.json` so the two agree
+That policy is seeded from the MeTA fleet's `data-paths.json` so the two agree
 on day one, and it records what it was seeded from. `--once` prints the
 effective policy and its hash on every run, so a copy that has fallen behind is
 visible rather than assumed.
@@ -114,9 +93,22 @@ visible rather than assumed.
 | Both, from one fleet checkout | `OCE_SENTRY_FLEET_REPO` → the repo root |
 | The fleet's tracking history ("looked at 25 times") | `OCE_SENTRY_WATCHLIST` → `watchlist.json` |
 
-All read-only, all optional. PowerShell 7 (`pwsh`) is needed only to *run* a
-kit; without it the queue works and runbook execution reports the missing
+All read-only, all optional. PowerShell 7 (`pwsh`) is needed only to run a kit;
+without it the queue works and runbook execution reports the missing
 dependency.
+
+## How it works
+
+Modelled on the `risk-management-harness` (Risk Sentry) in
+`onedrive/Security/appsec-ai-tools`, and its sibling PR Sentry. The patterns
+carried over deliberately:
+
+- Tabbed Textual TUI, `python -m oce_sentry`, `--once` for a console dump, `--dev` for hot reload.
+- `az login` is the entire auth story. No PATs, no token files, no secrets in config.
+- Deterministic fetch; the model judges only.
+- Hash-gated AI caching.
+- Nearly read-only.
+- Only actionable rows are shown.
 
 ### Service level indicators
 
@@ -374,7 +366,6 @@ Content rules regardless of visibility:
 - **No {Credential}, ever.** The ambient Azure identity is the only {Credential}.
 - Internal endpoints (cluster URIs, library paths, ADO org names) live in
   configuration, not in code, so the repository stays portable and reviewable.
-
 
 
 
