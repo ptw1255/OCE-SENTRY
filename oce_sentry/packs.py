@@ -91,7 +91,7 @@ def _render_context(incident: Incident, kits, kit_results=None) -> str:
             "## Query results available in this pack",
             "",
             "`kit-results/` holds the output of investigation queries already run",
-            "against this incident, with the operator's own credentials. These are",
+            "against this incident, with the operator's own {Credential}. These are",
             "measured rows, not estimates -- prefer them over anything inferred.",
             "",
         ]
@@ -119,7 +119,7 @@ console holds it. `context.md` is the same, rendered for reading.
 `base-rates.md`, when present, is an investigation kit's precomputed history for
 this condition -- often the answer on its own. `kit-results/` holds the output
 of investigation queries that were run against this incident: real rows from
-Kusto, measured with the operator's own credentials.
+Kusto, measured with the operator's own {Credential}.
 
 Nothing in this directory is a source of truth. IcM is.
 """
@@ -149,7 +149,7 @@ def load_kit_results(
 
     This is the path that makes kits an alternative to live connectors: the
     query runs once, verified and reviewable, against the operator's own
-    credentials; the skill then reads real rows without touching a cluster.
+    {Credential}; the skill then reads real rows without touching a cluster.
     """
     directory = config.output_dir / incident.incident_id
     if not directory.is_dir():

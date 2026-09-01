@@ -33,7 +33,7 @@ def _find_az() -> str:
             return found
     raise AuthError(
         "Azure CLI not found on PATH. Install it and run `az login`; it is the only "
-        "credential this console uses."
+        "{Credential} this console uses."
     )
 
 

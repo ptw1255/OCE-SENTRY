@@ -11,7 +11,7 @@ and feeds later skill runs -- and offers a link to the same query in the tool
 built for reading it.
 
 The link carries the query itself, gzipped and base64'd, which is the format
-the ADX web UI expects. Nothing is executed here and no credentials are
+the ADX web UI expects. Nothing is executed here and no {Credential} is
 involved: the browser authenticates as the operator, exactly as it would if
 they had pasted the query themselves.
 """

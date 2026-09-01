@@ -19,7 +19,7 @@ The registry is transcribed from the RCA agent's own reference
 (`.github/references/MCP_Servers_Kusto_Cluster_References.md`) so the purposes
 are the team's words, not a guess. Anything a skill names that is not in the
 registry is still listed -- an unknown cluster appearing is exactly the signal
-that a new data source arrived.
+that a new [Data Source] arrived.
 """
 
 from __future__ import annotations
